@@ -1,0 +1,52 @@
+.heatmap {
+  overflow-x: auto;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-width: 100%;
+}
+
+.cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+.level0 {
+  background-color: var(--color-bg-tertiary);
+}
+
+.level1 {
+  background-color: #c6dbef;
+}
+
+.level2 {
+  background-color: #6baed6;
+}
+
+.level3 {
+  background-color: #2171b5;
+}
+
+.level4 {
+  background-color: #084594;
+}
+
+[data-theme="dark"] .level1 {
+  background-color: #1a3a5c;
+}
+
+[data-theme="dark"] .level2 {
+  background-color: #2a5a8c;
+}
+
+[data-theme="dark"] .level3 {
+  background-color: #3a7abc;
+}
+
+[data-theme="dark"] .level4 {
+  background-color: #5c9cd6;
+}

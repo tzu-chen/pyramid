@@ -1,0 +1,395 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.loading,
+.error {
+  padding: var(--space-10);
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  flex-shrink: 0;
+}
+
+.toolbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sessionTitle {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.statusSelect {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  font-size: var(--font-size-xs);
+  outline: none;
+  color: inherit;
+}
+
+.runButton {
+  padding: var(--space-1) var(--space-4);
+  background-color: var(--color-success);
+  color: white;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.runButton:hover {
+  opacity: 0.9;
+}
+
+.runButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.runTestsButton {
+  padding: var(--space-1) var(--space-3);
+  background-color: var(--color-warning);
+  color: white;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.runTestsButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Workbench */
+.workbench {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.editorPane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.fileTabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.fileTab {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.fileTab:hover {
+  color: var(--color-text);
+  background-color: var(--color-bg-tertiary);
+}
+
+.fileTabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.editorContainer {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Right pane */
+.rightPane {
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.tabContent {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Output */
+.outputPane {
+  padding: var(--space-3);
+}
+
+.runOutput {
+  margin-bottom: var(--space-4);
+}
+
+.runHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.runCommand {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.runMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.stdout,
+.stderr {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: var(--space-2);
+}
+
+.stdout {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.stderr {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.placeholder {
+  color: var(--color-text-tertiary);
+  padding: var(--space-6);
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+.runHistory {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--space-3);
+}
+
+.historyTitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  margin-bottom: var(--space-2);
+}
+
+.historyItem {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.historyMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.historyOutput {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* Notes */
+.notesPane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.notesEditor {
+  width: 100%;
+  height: 100%;
+  padding: var(--space-4);
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+.notesDisplay {
+  padding: var(--space-4);
+  cursor: text;
+  min-height: 200px;
+}
+
+/* Tests */
+.testsPane {
+  padding: var(--space-3);
+}
+
+.testResults {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.testResult {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.testPassed {
+  border-color: var(--color-success);
+}
+
+.testFailed {
+  border-color: var(--color-danger);
+}
+
+.testHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.testTime {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.testDetails {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.testBlock label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+.testBlock pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.testCaseList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.testCase {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.testCaseHeader {
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+/* Problem */
+.problemPane {
+  padding: var(--space-4);
+}
+
+.problemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.problemField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.problemField label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+}
