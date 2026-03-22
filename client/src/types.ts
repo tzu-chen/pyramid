@@ -94,12 +94,28 @@ export interface RepoExploration {
   session_status?: string;
 }
 
+export type LakeStatus = 'initializing' | 'ready' | 'building' | 'error';
+
+export interface LeanSessionMeta {
+  id: string;
+  session_id: string;
+  lean_version: string;
+  mathlib_version: string;
+  project_path: string;
+  lake_status: LakeStatus;
+  last_build_output: string;
+  last_build_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SessionDetail extends Session {
   files: SessionFile[];
   runs: ExecutionRun[];
   problem?: CpProblem & { test_cases?: TestCase[] };
   test_cases?: TestCase[];
   repo?: RepoExploration;
+  lean_meta?: LeanSessionMeta;
 }
 
 export interface TestResult {

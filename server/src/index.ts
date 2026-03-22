@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import { WebSocketServer } from 'ws';
+import { parse as parseUrl } from 'url';
 import './db.js';
+import db from './db.js';
 import sessionsRouter from './routes/sessions.js';
 import filesRouter from './routes/files.js';
 import executionRouter from './routes/execution.js';
@@ -9,6 +12,8 @@ import cpRouter from './routes/cp.js';
 import reposRouter from './routes/repos.js';
 import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
+import leanRouter from './routes/lean.js';
+import { leanLsp } from './services/lean-lsp.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3007', 10);
@@ -24,6 +29,7 @@ app.use('/api/cp', cpRouter);
 app.use('/api/repos', reposRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/lean', leanRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -37,6 +43,47 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Pyramid server running on port ${PORT}`);
+});
+
+// WebSocket server for Lean LSP
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const { pathname } = parseUrl(request.url || '');
+
+  // Match /ws/lean/:sessionId
+  const match = pathname?.match(/^\/ws\/lean\/([a-f0-9-]+)$/);
+  if (!match) {
+    socket.destroy();
+    return;
+  }
+
+  const sessionId = match[1];
+
+  // Verify session exists and is a lean session
+  const meta = db.prepare('SELECT project_path FROM lean_session_meta WHERE session_id = ?')
+    .get(sessionId) as { project_path: string } | undefined;
+
+  if (!meta) {
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    const projectPath = path.join(__dirname, '..', 'data', 'lean-projects', sessionId);
+    leanLsp.handleWebSocket(ws, sessionId, projectPath);
+  });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  leanLsp.stopAll();
+  server.close();
+});
+
+process.on('SIGINT', () => {
+  leanLsp.stopAll();
+  server.close();
 });

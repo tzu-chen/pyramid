@@ -8,6 +8,7 @@ const DB_PATH = path.join(DATA_DIR, 'pyramid.db');
 // Ensure data directories exist
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'repos'), { recursive: true });
+fs.mkdirSync(path.join(DATA_DIR, 'lean-projects'), { recursive: true });
 
 const db: DatabaseType = new Database(DB_PATH);
 
@@ -103,6 +104,21 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS lean_session_meta (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    lean_version TEXT NOT NULL,
+    mathlib_version TEXT NOT NULL DEFAULT '',
+    project_path TEXT NOT NULL,
+    lake_status TEXT NOT NULL DEFAULT 'initializing'
+      CHECK (lake_status IN ('initializing', 'ready', 'building', 'error')),
+    last_build_output TEXT NOT NULL DEFAULT '',
+    last_build_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -122,6 +138,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_cp_verdict ON cp_problems(verdict);
   CREATE INDEX IF NOT EXISTS idx_test_cases_problem ON test_cases(problem_id);
   CREATE INDEX IF NOT EXISTS idx_repo_session ON repo_explorations(session_id);
+  CREATE INDEX IF NOT EXISTS idx_lean_meta_session ON lean_session_meta(session_id);
 `);
 
 // FTS5 virtual table for sessions search

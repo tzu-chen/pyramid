@@ -1,0 +1,77 @@
+.panel {
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.status {
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-6);
+  font-family: var(--font-sans);
+}
+
+.noGoals {
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding: var(--space-6);
+  font-family: var(--font-sans);
+  font-style: italic;
+}
+
+.complete {
+  color: var(--color-success);
+  text-align: center;
+  padding: var(--space-6);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--font-size-base);
+}
+
+.goal {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.goal:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.goalHeader {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+  font-family: var(--font-sans);
+}
+
+.hypotheses {
+  margin-bottom: var(--space-2);
+}
+
+.hypothesis {
+  padding: var(--space-1) 0;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.turnstile {
+  color: var(--color-lean);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--color-border-light);
+  margin-top: var(--space-1);
+}
+
+.target {
+  color: var(--color-text);
+  font-weight: 500;
+  padding: var(--space-1) 0;
+  word-break: break-word;
+}

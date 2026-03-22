@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
 import { parseProblemUrl, downloadTestCases } from '../services/oj.js';
+import { leanProject } from '../services/lean-project.js';
+import { leanLsp } from '../services/lean-lsp.js';
 
 const router = Router();
 
@@ -95,6 +97,13 @@ router.get('/:id', (req: Request, res: Response) => {
       }
     }
 
+    if (session.session_type === 'lean') {
+      const leanMeta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(req.params.id);
+      if (leanMeta) {
+        result.lean_meta = leanMeta;
+      }
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -113,7 +122,12 @@ router.post('/', async (req: Request, res: Response) => {
 
     const id = uuidv4();
     const now = getCstTimestamp();
-    const workingDir = path.join('data', 'sessions', id);
+
+    // Lean sessions use lean-projects directory; others use sessions
+    const isLean = session_type === 'lean';
+    const workingDir = isLean
+      ? path.join('data', 'lean-projects', id)
+      : path.join('data', 'sessions', id);
     const absWorkingDir = path.join(__dirname, '..', '..', workingDir);
     fs.mkdirSync(absWorkingDir, { recursive: true });
 
@@ -124,7 +138,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Create default file based on language
     const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : 'py';
-    const defaultFilename = session_type === 'cp' ? `solution.${ext}` : `main.${ext}`;
+    const defaultFilename = session_type === 'cp' ? `solution.${ext}` : isLean ? 'Main.lean' : `main.${ext}`;
     const fileId = uuidv4();
 
     db.prepare(`
@@ -132,7 +146,24 @@ router.post('/', async (req: Request, res: Response) => {
       VALUES (?, ?, ?, 'source', ?, 1, ?, ?)
     `).run(fileId, id, defaultFilename, language, now, now);
 
-    fs.writeFileSync(path.join(absWorkingDir, defaultFilename), '');
+    if (!isLean) {
+      fs.writeFileSync(path.join(absWorkingDir, defaultFilename), '');
+    }
+
+    // Handle Lean session: scaffold Lake project and insert metadata
+    if (isLean) {
+      const metaId = uuidv4();
+      const leanVersion = 'leanprover/lean4:v4.16.0';
+      db.prepare(`
+        INSERT INTO lean_session_meta (id, session_id, lean_version, mathlib_version, project_path, lake_status, created_at, updated_at)
+        VALUES (?, ?, ?, '', ?, 'initializing', ?, ?)
+      `).run(metaId, id, leanVersion, workingDir, now, now);
+
+      // Scaffold project in background (don't block response)
+      leanProject.scaffoldProject(id).catch((err) => {
+        console.error(`Failed to scaffold lean project for session ${id}:`, err);
+      });
+    }
 
     // Handle CP session
     if (session_type === 'cp' && problem_url) {
@@ -228,6 +259,12 @@ router.delete('/:id', (req: Request, res: Response) => {
     if (!session) {
       res.status(404).json({ error: 'Session not found' });
       return;
+    }
+
+    // Stop Lean LSP if running and clean up lean project
+    if (session.session_type === 'lean') {
+      leanLsp.stopLsp(req.params.id as string);
+      leanProject.deleteProject(req.params.id as string);
     }
 
     // Delete working directory
