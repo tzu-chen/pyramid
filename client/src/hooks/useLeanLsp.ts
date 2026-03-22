@@ -160,9 +160,13 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
     };
   }, [connect, enabled, sessionId]);
 
+  // Use ref for initialized check so callbacks remain stable
+  const initializedRef = useRef(false);
+  initializedRef.current = state.initialized;
+
   const sendDidOpen = useCallback((uri: string, content: string) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !state.initialized) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !initializedRef.current) return;
 
     fileUriRef.current = uri;
     versionRef.current = 1;
@@ -180,11 +184,11 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
         },
       },
     }));
-  }, [state.initialized]);
+  }, []);
 
   const sendDidChange = useCallback((uri: string, content: string) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !state.initialized) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !initializedRef.current) return;
 
     // If file hasn't been opened yet, open it first
     if (!fileOpenedRef.current) {
@@ -203,11 +207,11 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
         contentChanges: [{ text: content }],
       },
     }));
-  }, [state.initialized, sendDidOpen]);
+  }, [sendDidOpen]);
 
   const requestGoalState = useCallback((uri: string, line: number, character: number) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !state.initialized) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !initializedRef.current) return;
 
     const id = requestIdRef.current++;
     pendingRef.current.set(id, 'Lean/plainGoal');
@@ -221,7 +225,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
         position: { line, character },
       },
     }));
-  }, [state.initialized]);
+  }, []);
 
   return {
     connected: state.connected,

@@ -136,6 +136,10 @@ function SessionPage() {
     return () => clearInterval(interval);
   }, [isLean, id, lakeStatus]);
 
+  // Use refs for LSP methods so callbacks stay stable
+  const lspRef = useRef(lsp);
+  lspRef.current = lsp;
+
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
       setFileContent(content);
@@ -143,16 +147,16 @@ function SessionPage() {
 
       // Send didChange to LSP
       if (isLean && fileUriRef.current) {
-        lsp.sendDidChange(fileUriRef.current, content);
+        lspRef.current.sendDidChange(fileUriRef.current, content);
       }
     }
-  }, [id, activeFileId, isLean, lsp]);
+  }, [id, activeFileId, isLean]);
 
   const handleCursorChange = useCallback((position: { line: number; character: number }) => {
     if (isLean && fileUriRef.current) {
-      lsp.requestGoalState(fileUriRef.current, position.line, position.character);
+      lspRef.current.requestGoalState(fileUriRef.current, position.line, position.character);
     }
-  }, [isLean, lsp]);
+  }, [isLean]);
 
   const handleExecute = async () => {
     if (!id || executing) return;
