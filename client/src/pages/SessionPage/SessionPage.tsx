@@ -2,17 +2,23 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
 import { useDebounce } from '../../hooks/useDebounce';
+import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
 import { cpService } from '../../services/cpService';
 import { repoService } from '../../services/repoService';
+import { leanService } from '../../services/leanService';
 import CodeEditor from '../../components/CodeEditor/CodeEditor';
 import FileTree from '../../components/FileTree/FileTree';
 import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer';
+import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import Badge from '../../components/Badge/Badge';
-import { ExecutionRun, SessionFile, TestResult } from '../../types';
+import { ExecutionRun, SessionFile, TestResult, LakeStatus } from '../../types';
 import styles from './SessionPage.module.css';
+
+type NonLeanTab = 'output' | 'notes' | 'tests' | 'problem' | 'repo';
+type LeanTab = 'goalState' | 'messages' | 'notes' | 'links';
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,7 +26,7 @@ function SessionPage() {
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
-  const [activeTab, setActiveTab] = useState<'output' | 'notes' | 'tests' | 'problem' | 'repo'>('output');
+  const [activeTab, setActiveTab] = useState<NonLeanTab | LeanTab>('output');
   const [notes, setNotes] = useState('');
   const [notesEditing, setNotesEditing] = useState(false);
   const [runs, setRuns] = useState<ExecutionRun[]>([]);
@@ -31,8 +37,26 @@ function SessionPage() {
   const [repoFileContent, setRepoFileContent] = useState('');
   const [repoFileLoading, setRepoFileLoading] = useState(false);
 
+  // Lean-specific state
+  const [building, setBuilding] = useState(false);
+  const [lakeStatus, setLakeStatus] = useState<LakeStatus>('initializing');
+  const [buildOutput, setBuildOutput] = useState('');
+
+  const isLean = session?.session_type === 'lean';
+
+  // Lean LSP hook
+  const lsp = useLeanLsp(id, isLean);
+
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
+  const fileUriRef = useRef<string | null>(null);
+
+  // Compute file URI for LSP
+  const getFileUri = useCallback((filename: string) => {
+    if (!session) return '';
+    // For lean sessions, the working dir is the Lake project dir
+    return `file://${session.working_dir.startsWith('/') ? '' : '/'}${session.working_dir}/${filename}`;
+  }, [session]);
 
   // Load first file when session loads
   useEffect(() => {
@@ -42,15 +66,52 @@ function SessionPage() {
       setNotes(session.notes);
       prevNotesRef.current = session.notes;
       setRuns(session.runs || []);
+
+      // Set default tab based on session type
+      if (session.session_type === 'lean') {
+        setActiveTab('goalState');
+      } else {
+        setActiveTab('output');
+      }
+
+      // Load lean metadata
+      if (session.lean_meta) {
+        setLakeStatus(session.lean_meta.lake_status);
+        setBuildOutput(session.lean_meta.last_build_output);
+      }
     }
   }, [session?.id]);
 
   // Load file content
   useEffect(() => {
     if (id && activeFileId) {
-      fileService.getContent(id, activeFileId).then(setFileContent).catch(() => {});
+      fileService.getContent(id, activeFileId).then((content) => {
+        setFileContent(content);
+
+        // Send didOpen to LSP for lean sessions
+        if (isLean && lsp.initialized && session?.files) {
+          const file = session.files.find(f => f.id === activeFileId);
+          if (file) {
+            const uri = getFileUri(file.filename);
+            fileUriRef.current = uri;
+            lsp.sendDidOpen(uri, content);
+          }
+        }
+      }).catch(() => {});
     }
   }, [id, activeFileId]);
+
+  // Send didOpen when LSP becomes initialized (if file already loaded)
+  useEffect(() => {
+    if (isLean && lsp.initialized && fileContent && session?.files && activeFileId) {
+      const file = session.files.find(f => f.id === activeFileId);
+      if (file) {
+        const uri = getFileUri(file.filename);
+        fileUriRef.current = uri;
+        lsp.sendDidOpen(uri, fileContent);
+      }
+    }
+  }, [lsp.initialized]);
 
   // Auto-save notes
   useEffect(() => {
@@ -60,12 +121,38 @@ function SessionPage() {
     }
   }, [id, debouncedNotes, notesEditing]);
 
+  // Poll lake status while initializing
+  useEffect(() => {
+    if (!isLean || !id || lakeStatus !== 'initializing') return;
+    const interval = setInterval(async () => {
+      try {
+        const meta = await leanService.getMeta(id);
+        setLakeStatus(meta.lake_status);
+        if (meta.lake_status !== 'initializing') {
+          setBuildOutput(meta.last_build_output);
+        }
+      } catch { /* */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isLean, id, lakeStatus]);
+
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
       setFileContent(content);
       await fileService.updateContent(id, activeFileId, content).catch(() => {});
+
+      // Send didChange to LSP
+      if (isLean && fileUriRef.current) {
+        lsp.sendDidChange(fileUriRef.current, content);
+      }
     }
-  }, [id, activeFileId]);
+  }, [id, activeFileId, isLean, lsp]);
+
+  const handleCursorChange = useCallback((position: { line: number; character: number }) => {
+    if (isLean && fileUriRef.current) {
+      lsp.requestGoalState(fileUriRef.current, position.line, position.character);
+    }
+  }, [isLean, lsp]);
 
   const handleExecute = async () => {
     if (!id || executing) return;
@@ -78,6 +165,23 @@ function SessionPage() {
       console.error(err);
     } finally {
       setExecuting(false);
+    }
+  };
+
+  const handleBuild = async () => {
+    if (!id || building) return;
+    setBuilding(true);
+    setLakeStatus('building');
+    try {
+      const result = await leanService.build(id);
+      setBuildOutput(result.build_output);
+      setLakeStatus(result.lake_status as LakeStatus);
+      setActiveTab('messages');
+    } catch (err) {
+      console.error(err);
+      setLakeStatus('error');
+    } finally {
+      setBuilding(false);
     }
   };
 
@@ -121,6 +225,12 @@ function SessionPage() {
 
   const latestRun = runs[0];
 
+  // Lake status badge variant
+  const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
+    : lakeStatus === 'error' ? 'danger'
+    : lakeStatus === 'building' ? 'warning'
+    : 'default';
+
   return (
     <div className={styles.page}>
       <div className={styles.toolbar}>
@@ -128,6 +238,9 @@ function SessionPage() {
           <h2 className={styles.sessionTitle}>{session.title}</h2>
           <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
           <Badge label={session.language} />
+          {isLean && (
+            <Badge label={lakeStatus} variant={lakeStatusVariant} />
+          )}
         </div>
         <div className={styles.toolbarRight}>
           <select
@@ -140,14 +253,22 @@ function SessionPage() {
             <option value="completed">Completed</option>
             <option value="archived">Archived</option>
           </select>
-          {session.session_type === 'cp' && session.problem && (
-            <button className={styles.runTestsButton} onClick={handleRunTests} disabled={runningTests}>
-              {runningTests ? 'Testing...' : 'Run Tests'}
+          {isLean ? (
+            <button className={styles.buildButton} onClick={handleBuild} disabled={building || lakeStatus === 'initializing'}>
+              {building ? 'Building...' : 'Build'}
             </button>
+          ) : (
+            <>
+              {session.session_type === 'cp' && session.problem && (
+                <button className={styles.runTestsButton} onClick={handleRunTests} disabled={runningTests}>
+                  {runningTests ? 'Testing...' : 'Run Tests'}
+                </button>
+              )}
+              <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
+                {executing ? 'Running...' : 'Run'}
+              </button>
+            </>
           )}
-          <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
-            {executing ? 'Running...' : 'Run'}
-          </button>
         </div>
       </div>
 
@@ -171,52 +292,135 @@ function SessionPage() {
               value={fileContent}
               language={session.language}
               onChange={handleSaveFile}
+              onCursorChange={isLean ? handleCursorChange : undefined}
+              diagnostics={isLean ? lsp.diagnostics : undefined}
             />
           </div>
         </div>
 
         <div className={styles.rightPane}>
           <div className={styles.tabs}>
-            <button
-              className={`${styles.tab} ${activeTab === 'output' ? styles.tabActive : ''}`}
-              onClick={() => setActiveTab('output')}
-            >
-              Output
-            </button>
-            <button
-              className={`${styles.tab} ${activeTab === 'notes' ? styles.tabActive : ''}`}
-              onClick={() => setActiveTab('notes')}
-            >
-              Notes
-            </button>
-            {session.session_type === 'cp' && (
+            {isLean ? (
               <>
                 <button
-                  className={`${styles.tab} ${activeTab === 'tests' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('tests')}
+                  className={`${styles.tab} ${activeTab === 'goalState' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('goalState')}
                 >
-                  Tests
+                  Goal State
                 </button>
                 <button
-                  className={`${styles.tab} ${activeTab === 'problem' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('problem')}
+                  className={`${styles.tab} ${activeTab === 'messages' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('messages')}
                 >
-                  Problem
+                  Messages
+                </button>
+                <button
+                  className={`${styles.tab} ${activeTab === 'notes' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('notes')}
+                >
+                  Notes
+                </button>
+                <button
+                  className={`${styles.tab} ${activeTab === 'links' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('links')}
+                >
+                  Links
                 </button>
               </>
-            )}
-            {session.session_type === 'repo' && (
-              <button
-                className={`${styles.tab} ${activeTab === 'repo' ? styles.tabActive : ''}`}
-                onClick={() => setActiveTab('repo')}
-              >
-                Repo
-              </button>
+            ) : (
+              <>
+                <button
+                  className={`${styles.tab} ${activeTab === 'output' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('output')}
+                >
+                  Output
+                </button>
+                <button
+                  className={`${styles.tab} ${activeTab === 'notes' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('notes')}
+                >
+                  Notes
+                </button>
+                {session.session_type === 'cp' && (
+                  <>
+                    <button
+                      className={`${styles.tab} ${activeTab === 'tests' ? styles.tabActive : ''}`}
+                      onClick={() => setActiveTab('tests')}
+                    >
+                      Tests
+                    </button>
+                    <button
+                      className={`${styles.tab} ${activeTab === 'problem' ? styles.tabActive : ''}`}
+                      onClick={() => setActiveTab('problem')}
+                    >
+                      Problem
+                    </button>
+                  </>
+                )}
+                {session.session_type === 'repo' && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'repo' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('repo')}
+                  >
+                    Repo
+                  </button>
+                )}
+              </>
             )}
           </div>
 
           <div className={styles.tabContent}>
-            {activeTab === 'output' && (
+            {/* Lean: Goal State */}
+            {activeTab === 'goalState' && isLean && (
+              <GoalStatePanel
+                goalState={lsp.goalState}
+                connected={lsp.connected}
+                initialized={lsp.initialized}
+              />
+            )}
+
+            {/* Lean: Messages */}
+            {activeTab === 'messages' && isLean && (
+              <div className={styles.messagesPane}>
+                {buildOutput && (
+                  <div className={styles.buildOutputSection}>
+                    <div className={styles.buildOutputHeader}>Build Output</div>
+                    <pre className={styles.buildOutputContent}>{buildOutput}</pre>
+                  </div>
+                )}
+                {lsp.messages.length > 0 ? (
+                  <div className={styles.lspMessages}>
+                    {lsp.messages.map((msg, i) => (
+                      <div key={i} className={styles.lspMessage}>{msg}</div>
+                    ))}
+                  </div>
+                ) : !buildOutput ? (
+                  <div className={styles.placeholder}>No messages yet</div>
+                ) : null}
+              </div>
+            )}
+
+            {/* Lean: Links */}
+            {activeTab === 'links' && isLean && (
+              <div className={styles.linksPane}>
+                {session.links && session.links.length > 0 ? (
+                  <div className={styles.linksList}>
+                    {session.links.map((link, i) => (
+                      <div key={i} className={styles.linkItem}>
+                        <Badge label={link.app} />
+                        <span className={styles.linkRef}>{link.ref_type}: {link.ref_id}</span>
+                        {link.label && <span className={styles.linkLabel}>{link.label}</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.placeholder}>No cross-app links</div>
+                )}
+              </div>
+            )}
+
+            {/* Non-lean: Output */}
+            {activeTab === 'output' && !isLean && (
               <div className={styles.outputPane}>
                 {latestRun ? (
                   <div className={styles.runOutput}>
@@ -253,6 +457,7 @@ function SessionPage() {
               </div>
             )}
 
+            {/* Shared: Notes */}
             {activeTab === 'notes' && (
               <div className={styles.notesPane}>
                 {notesEditing ? (
@@ -276,6 +481,7 @@ function SessionPage() {
               </div>
             )}
 
+            {/* CP: Tests */}
             {activeTab === 'tests' && session.session_type === 'cp' && (
               <div className={styles.testsPane}>
                 {testResults ? (
@@ -322,6 +528,7 @@ function SessionPage() {
               </div>
             )}
 
+            {/* CP: Problem */}
             {activeTab === 'problem' && session.problem && (
               <div className={styles.problemPane}>
                 <div className={styles.problemInfo}>
@@ -356,6 +563,7 @@ function SessionPage() {
               </div>
             )}
 
+            {/* Repo */}
             {activeTab === 'repo' && session.session_type === 'repo' && (
               <div className={styles.repoPane}>
                 {session.repo ? (

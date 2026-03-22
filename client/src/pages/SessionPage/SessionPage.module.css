@@ -475,3 +475,100 @@
   margin: 0;
   line-height: 1.5;
 }
+
+/* Lean: Build button */
+.buildButton {
+  padding: var(--space-1) var(--space-4);
+  background-color: var(--color-lean);
+  color: white;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.buildButton:hover {
+  opacity: 0.9;
+}
+
+.buildButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Lean: Messages pane */
+.messagesPane {
+  padding: var(--space-3);
+}
+
+.buildOutputSection {
+  margin-bottom: var(--space-4);
+}
+
+.buildOutputHeader {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: var(--space-2);
+}
+
+.buildOutputContent {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.lspMessages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lspMessage {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+/* Lean: Links pane */
+.linksPane {
+  padding: var(--space-3);
+}
+
+.linksList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.linkItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.linkRef {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.linkLabel {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  margin-left: auto;
+}
