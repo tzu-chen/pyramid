@@ -1,11 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
-import { EditorState, Extension } from '@codemirror/state';
+import { EditorState, Extension, Compartment } from '@codemirror/state';
 import { ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { python } from '@codemirror/lang-python';
 import { cpp } from '@codemirror/lang-cpp';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
-import { linter, Diagnostic as CmDiagnostic } from '@codemirror/lint';
+import { linter } from '@codemirror/lint';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useTheme } from '../../contexts/ThemeContext';
 import styles from './CodeEditor.module.css';
@@ -223,27 +223,6 @@ export interface LspDiagnostic {
   severity?: number; // 1=Error, 2=Warning, 3=Info, 4=Hint
 }
 
-function lspDiagnosticsExtension(diagnostics: LspDiagnostic[]): Extension {
-  return linter(() => {
-    return diagnostics.map(d => {
-      const severityMap: Record<number, 'error' | 'warning' | 'info'> = {
-        1: 'error',
-        2: 'warning',
-        3: 'info',
-        4: 'info',
-      };
-      return {
-        from: 0, // Will be resolved by the caller who has doc access
-        to: 0,
-        severity: severityMap[d.severity || 1] || 'error',
-        message: d.message,
-        // Store range info for resolution
-        _range: d.range,
-      } as CmDiagnostic & { _range?: typeof d.range };
-    });
-  }, { delay: 0 });
-}
-
 // --- Main Component ---
 
 interface CodeEditorProps {
@@ -268,6 +247,7 @@ function getLanguageExtension(language: string) {
 function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const diagnosticsCompartment = useRef(new Compartment());
   const { theme } = useTheme();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -311,29 +291,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       extensions.push(EditorState.readOnly.of(true));
     }
 
-    // LSP diagnostics as linter
-    if (diagnostics && diagnostics.length > 0) {
-      extensions.push(linter((view) => {
-        return diagnostics.map(d => {
-          const doc = view.state.doc;
-          const startLine = Math.min(d.range.start.line + 1, doc.lines);
-          const endLine = Math.min(d.range.end.line + 1, doc.lines);
-          const sl = doc.line(startLine);
-          const el = doc.line(endLine);
-          const from = sl.from + Math.min(d.range.start.character, sl.length);
-          const to = el.from + Math.min(d.range.end.character, el.length);
-          const severityMap: Record<number, 'error' | 'warning' | 'info'> = {
-            1: 'error', 2: 'warning', 3: 'info', 4: 'info',
-          };
-          return {
-            from: Math.max(0, from),
-            to: Math.max(from, to),
-            severity: severityMap[d.severity || 1] || 'error',
-            message: d.message,
-          };
-        });
-      }, { delay: 0 }));
-    }
+    // LSP diagnostics via compartment — updates without recreating editor
+    extensions.push(diagnosticsCompartment.current.of([]));
 
     const state = EditorState.create({
       doc: value,
@@ -344,7 +303,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       state,
       parent: containerRef.current,
     });
-  }, [language, theme, readOnly, diagnostics]);
+  }, [language, theme, readOnly]);
 
   useEffect(() => {
     createEditor();
@@ -352,6 +311,37 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       viewRef.current?.destroy();
     };
   }, [createEditor]);
+
+  // Update diagnostics without recreating the editor
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !diagnostics) return;
+
+    const linterExt = linter((editorView) => {
+      return diagnostics.map(d => {
+        const doc = editorView.state.doc;
+        const startLine = Math.min(d.range.start.line + 1, doc.lines);
+        const endLine = Math.min(d.range.end.line + 1, doc.lines);
+        const sl = doc.line(startLine);
+        const el = doc.line(endLine);
+        const from = sl.from + Math.min(d.range.start.character, sl.length);
+        const to = el.from + Math.min(d.range.end.character, el.length);
+        const severityMap: Record<number, 'error' | 'warning' | 'info'> = {
+          1: 'error', 2: 'warning', 3: 'info', 4: 'info',
+        };
+        return {
+          from: Math.max(0, from),
+          to: Math.max(from, to),
+          severity: severityMap[d.severity || 1] || 'error',
+          message: d.message,
+        };
+      });
+    }, { delay: 0 });
+
+    view.dispatch({
+      effects: diagnosticsCompartment.current.reconfigure(linterExt),
+    });
+  }, [diagnostics]);
 
   // Update content from outside
   useEffect(() => {
@@ -373,4 +363,3 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
 }
 
 export default CodeEditor;
-export { lspDiagnosticsExtension };
