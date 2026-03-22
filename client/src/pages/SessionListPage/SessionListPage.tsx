@@ -1,16 +1,24 @@
-import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSessions } from '../../hooks/useSessions';
 import { useDebounce } from '../../hooks/useDebounce';
+import { sessionService } from '../../services/sessionService';
 import Badge from '../../components/Badge/Badge';
+import { PencilIcon, TrashIcon, CheckIcon, XIcon } from '../../components/Icons/Icons';
 import styles from './SessionListPage.module.css';
 
 function SessionListPage() {
+  const navigate = useNavigate();
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [languageFilter, setLanguageFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
+
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const params = useMemo(() => ({
     session_type: typeFilter || undefined,
@@ -19,7 +27,63 @@ function SessionListPage() {
     search: debouncedSearch || undefined,
   }), [typeFilter, statusFilter, languageFilter, debouncedSearch]);
 
-  const { sessions, loading } = useSessions(params);
+  const { sessions, loading, refresh } = useSessions(params);
+
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
+
+  const handleRenameStart = (id: string, currentTitle: string) => {
+    setRenamingId(id);
+    setRenameValue(currentTitle);
+    setDeletingId(null);
+  };
+
+  const handleRenameConfirm = async () => {
+    if (!renamingId || !renameValue.trim()) return;
+    try {
+      await sessionService.update(renamingId, { title: renameValue.trim() });
+      setRenamingId(null);
+      refresh();
+    } catch {
+      // keep editing on error
+    }
+  };
+
+  const handleRenameCancel = () => {
+    setRenamingId(null);
+  };
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleRenameConfirm();
+    } else if (e.key === 'Escape') {
+      handleRenameCancel();
+    }
+  };
+
+  const handleDeleteStart = (id: string) => {
+    setDeletingId(id);
+    setRenamingId(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingId) return;
+    try {
+      await sessionService.remove(deletingId);
+      setDeletingId(null);
+      refresh();
+    } catch {
+      // keep confirmation visible on error
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeletingId(null);
+  };
 
   return (
     <div className={styles.page}>
@@ -68,22 +132,66 @@ function SessionListPage() {
       ) : (
         <div className={styles.sessionList}>
           {sessions.map(session => (
-            <Link key={session.id} to={`/sessions/${session.id}`} className={styles.sessionItem}>
-              <div className={styles.sessionInfo}>
-                <span className={styles.sessionTitle}>{session.title}</span>
-                <div className={styles.sessionMeta}>
-                  <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
-                  <Badge label={session.language} />
-                  <Badge label={session.status} variant={session.status === 'active' ? 'success' : session.status === 'archived' ? 'default' : 'warning'} />
-                  {session.tags.map(tag => (
-                    <Badge key={tag} label={tag} />
-                  ))}
+            <div key={session.id} className={styles.sessionItem}>
+              {deletingId === session.id ? (
+                <div className={styles.confirmBar}>
+                  <span className={styles.confirmText}>Delete this session?</span>
+                  <button className={`${styles.iconButton} ${styles.iconButtonDanger}`} onClick={handleDeleteConfirm} title="Confirm delete">
+                    <CheckIcon size={14} />
+                  </button>
+                  <button className={styles.iconButton} onClick={handleDeleteCancel} title="Cancel">
+                    <XIcon size={14} />
+                  </button>
                 </div>
-              </div>
-              <span className={styles.sessionDate}>
-                {new Date(session.updated_at).toLocaleDateString()}
-              </span>
-            </Link>
+              ) : (
+                <>
+                  <div className={styles.sessionContent} onClick={() => navigate(`/sessions/${session.id}`)}>
+                    <div className={styles.sessionInfo}>
+                      {renamingId === session.id ? (
+                        <input
+                          ref={renameInputRef}
+                          className={styles.renameInput}
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onKeyDown={handleRenameKeyDown}
+                          onBlur={handleRenameConfirm}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className={styles.sessionTitle}>{session.title}</span>
+                      )}
+                      <div className={styles.sessionMeta}>
+                        <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
+                        <Badge label={session.language} />
+                        <Badge label={session.status} variant={session.status === 'active' ? 'success' : session.status === 'archived' ? 'default' : 'warning'} />
+                        {session.tags.map(tag => (
+                          <Badge key={tag} label={tag} />
+                        ))}
+                      </div>
+                    </div>
+                    <span className={styles.sessionDate}>
+                      {new Date(session.updated_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className={styles.sessionActions}>
+                    <button
+                      className={styles.iconButton}
+                      onClick={e => { e.stopPropagation(); handleRenameStart(session.id, session.title); }}
+                      title="Rename"
+                    >
+                      <PencilIcon size={14} />
+                    </button>
+                    <button
+                      className={`${styles.iconButton} ${styles.iconButtonDanger}`}
+                      onClick={e => { e.stopPropagation(); handleDeleteStart(session.id); }}
+                      title="Delete"
+                    >
+                      <TrashIcon size={14} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           ))}
         </div>
       )}
