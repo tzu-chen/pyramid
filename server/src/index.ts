@@ -11,7 +11,7 @@ import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3006', 10);
+const PORT = parseInt(process.env.PORT || '3007', 10);
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));

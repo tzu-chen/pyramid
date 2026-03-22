@@ -2,8 +2,8 @@
 
 Cross-app integration spec for Pyramid. This documents the endpoints and data shapes that sibling apps (Navigate, Scribe, Monolith, Granary) may call or reference.
 
-**Base URL:** `http://localhost:3006/api`
-**Port:** 3006 (server), 5177 (Vite dev)
+**Base URL:** `http://localhost:3007/api`
+**Port:** 3007 (server), 5177 (Vite dev)
 
 ---
 

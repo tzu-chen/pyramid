@@ -22,7 +22,7 @@ All five apps share the same tech stack and conventions. When in doubt, referenc
 ```
 npm run install:all       # Install dependencies for root, server/, and client/
 npm run dev               # Start both frontend (Vite) and backend (Express) concurrently
-npm run dev:server        # Backend only (Express on port 3006, tsx watch for hot reload)
+npm run dev:server        # Backend only (Express on port 3007, tsx watch for hot reload)
 npm run dev:client        # Frontend only (Vite on port 5177)
 npm run build             # Build both client and server for production
 npm run build:client      # Build frontend only (tsc && vite build)
@@ -30,9 +30,9 @@ npm run build:server      # Build backend only (tsc)
 npm start                 # Start production server (serves API + built frontend from client/dist/)
 ```
 
-**Port assignment:** Pyramid uses port **3006** (server) and **5177** (Vite dev) to avoid conflicts with Navigate (3001/5173), Scribe (3003/5173), Monolith (3005/5173), and Granary (3009/5174). The Vite dev server proxies `/api` requests to `http://localhost:3006`.
+**Port assignment:** Pyramid uses port **3007** (server) and **5177** (Vite dev) to avoid conflicts with Navigate (3001/5173), Scribe (3003/5173), Monolith (3005/5173), and Granary (3009/5174). The Vite dev server proxies `/api` requests to `http://localhost:3007`.
 
-No `.env` files. The only server environment variable is `PORT` (defaults to 3006).
+No `.env` files. The only server environment variable is `PORT` (defaults to 3007).
 
 ---
 
@@ -55,7 +55,7 @@ pyramid/
 │   │   ├── services/         # Data access layer (REST API calls)
 │   │   ├── hooks/            # Custom React hooks
 │   │   └── contexts/         # React contexts (theme)
-│   └── vite.config.ts        # Vite config with /api proxy to port 3006
+│   └── vite.config.ts        # Vite config with /api proxy to port 3007
 └── server/                   # Express backend
     ├── src/
     │   ├── index.ts          # Express entry point, mounts route modules
