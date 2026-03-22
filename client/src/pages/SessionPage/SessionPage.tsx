@@ -6,7 +6,9 @@ import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
 import { cpService } from '../../services/cpService';
+import { repoService } from '../../services/repoService';
 import CodeEditor from '../../components/CodeEditor/CodeEditor';
+import FileTree from '../../components/FileTree/FileTree';
 import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer';
 import Badge from '../../components/Badge/Badge';
 import { ExecutionRun, SessionFile, TestResult } from '../../types';
@@ -18,13 +20,16 @@ function SessionPage() {
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
-  const [activeTab, setActiveTab] = useState<'output' | 'notes' | 'tests' | 'problem'>('output');
+  const [activeTab, setActiveTab] = useState<'output' | 'notes' | 'tests' | 'problem' | 'repo'>('output');
   const [notes, setNotes] = useState('');
   const [notesEditing, setNotesEditing] = useState(false);
   const [runs, setRuns] = useState<ExecutionRun[]>([]);
   const [executing, setExecuting] = useState(false);
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
   const [runningTests, setRunningTests] = useState(false);
+  const [repoFilePath, setRepoFilePath] = useState<string | null>(null);
+  const [repoFileContent, setRepoFileContent] = useState('');
+  const [repoFileLoading, setRepoFileLoading] = useState(false);
 
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
@@ -89,6 +94,20 @@ function SessionPage() {
       setRunningTests(false);
     }
   };
+
+  const handleRepoFileSelect = useCallback(async (path: string) => {
+    if (!session?.repo) return;
+    setRepoFilePath(path);
+    setRepoFileLoading(true);
+    try {
+      const content = await repoService.readFile(session.repo.id, path);
+      setRepoFileContent(content);
+    } catch {
+      setRepoFileContent('Failed to load file.');
+    } finally {
+      setRepoFileLoading(false);
+    }
+  }, [session?.repo]);
 
   const handleStatusChange = async (status: string) => {
     if (!id) return;
@@ -185,6 +204,14 @@ function SessionPage() {
                   Problem
                 </button>
               </>
+            )}
+            {session.session_type === 'repo' && (
+              <button
+                className={`${styles.tab} ${activeTab === 'repo' ? styles.tabActive : ''}`}
+                onClick={() => setActiveTab('repo')}
+              >
+                Repo
+              </button>
             )}
           </div>
 
@@ -326,6 +353,52 @@ function SessionPage() {
                     <span>{session.problem.attempts}</span>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'repo' && session.session_type === 'repo' && (
+              <div className={styles.repoPane}>
+                {session.repo ? (
+                  <>
+                    <div className={styles.repoMeta}>
+                      <div className={styles.repoField}>
+                        <label>Repository</label>
+                        <span>{session.repo.repo_name}</span>
+                      </div>
+                      <div className={styles.repoField}>
+                        <label>Branch</label>
+                        <span>{session.repo.branch}</span>
+                      </div>
+                      <div className={styles.repoField}>
+                        <label>URL</label>
+                        <a href={session.repo.repo_url} target="_blank" rel="noopener noreferrer">
+                          {session.repo.repo_url}
+                        </a>
+                      </div>
+                    </div>
+                    <div className={styles.repoBrowser}>
+                      <div className={styles.repoTree}>
+                        <FileTree repoId={session.repo.id} onFileSelect={handleRepoFileSelect} />
+                      </div>
+                      <div className={styles.repoFileViewer}>
+                        {repoFileLoading ? (
+                          <div className={styles.placeholder}>Loading...</div>
+                        ) : repoFilePath ? (
+                          <>
+                            <div className={styles.repoFileName}>{repoFilePath}</div>
+                            <pre className={styles.repoFileContent}>{repoFileContent}</pre>
+                          </>
+                        ) : (
+                          <div className={styles.placeholder}>Select a file to view its contents</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className={styles.placeholder}>
+                    Repository is being cloned. Refresh the page in a moment.
+                  </div>
+                )}
               </div>
             )}
           </div>

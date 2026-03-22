@@ -393,3 +393,85 @@
   color: var(--color-text-secondary);
   text-transform: uppercase;
 }
+
+/* Repo */
+.repoPane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.repoMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.repoField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.repoField label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+}
+
+.repoField a {
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.repoField a:hover {
+  text-decoration: underline;
+}
+
+.repoBrowser {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.repoTree {
+  max-height: 240px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.repoFileViewer {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.repoFileName {
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.repoFileContent {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: var(--space-3);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  flex: 1;
+  margin: 0;
+  line-height: 1.5;
+}
