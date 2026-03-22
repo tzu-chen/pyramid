@@ -1,0 +1,47 @@
+.tree {
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  overflow-y: auto;
+}
+
+.node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  width: 100%;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.node:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.file {
+  color: var(--color-text-secondary);
+}
+
+.icon {
+  width: 12px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.children {
+  padding-left: var(--space-4);
+}
+
+.empty {
+  color: var(--color-text-tertiary);
+  padding: var(--space-4);
+  text-align: center;
+  font-family: var(--font-sans);
+}
