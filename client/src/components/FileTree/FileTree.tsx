@@ -62,7 +62,7 @@ function FileTree({ repoId, onFileSelect }: FileTreeProps) {
         <TreeNode key={entry.path} entry={entry} repoId={repoId} onFileSelect={onFileSelect} />
       ))}
       {entries.length === 0 && (
-        <div className={styles.empty}>No files found</div>
+        <div className={styles.empty}>No files yet — clone may still be in progress</div>
       )}
     </div>
   );
