@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import ThemeToggle from '../ThemeToggle/ThemeToggle';
+import { ThemeMenu } from '../ThemeMenu/ThemeMenu';
 import styles from './Layout.module.css';
 
 interface LayoutProps {
@@ -32,7 +32,7 @@ function Layout({ children }: LayoutProps) {
           </NavLink>
         </nav>
         <div className={styles.sidebarFooter}>
-          <ThemeToggle />
+          <ThemeMenu />
         </div>
       </aside>
       <main className={styles.main}>

@@ -248,7 +248,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
-  const { theme } = useTheme();
+  const { scheme } = useTheme();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onCursorChangeRef = useRef(onCursorChange);
@@ -283,7 +283,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       extensions.push(unicodeInputExtension());
     }
 
-    if (theme === 'dark') {
+    if (scheme.type === 'dark') {
       extensions.push(oneDark);
     }
 
@@ -303,7 +303,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       state,
       parent: containerRef.current,
     });
-  }, [language, theme, readOnly]);
+  }, [language, scheme, readOnly]);
 
   useEffect(() => {
     createEditor();
