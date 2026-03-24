@@ -191,4 +191,12 @@ export const leanLsp = {
       this.stopLsp(sessionId);
     }
   },
+
+  forceStopAll(): void {
+    for (const [sessionId, lp] of processes) {
+      if (lp.idleTimer) clearTimeout(lp.idleTimer);
+      try { lp.process.kill('SIGKILL'); } catch { /* */ }
+      processes.delete(sessionId);
+    }
+  },
 };

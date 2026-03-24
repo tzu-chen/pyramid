@@ -78,12 +78,15 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  leanLsp.stopAll();
-  server.close();
-});
+function shutdown() {
+  leanLsp.forceStopAll();
+  server.close(() => {
+    process.exit(0);
+  });
+  // If server.close doesn't finish within 2 seconds, force exit
+  const forceExit = setTimeout(() => process.exit(0), 2000);
+  if (typeof forceExit === 'object' && 'unref' in forceExit) forceExit.unref();
+}
 
-process.on('SIGINT', () => {
-  leanLsp.stopAll();
-  server.close();
-});
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
