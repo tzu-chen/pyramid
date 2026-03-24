@@ -45,7 +45,8 @@ function SessionPage() {
   const isLean = session?.session_type === 'lean';
 
   // Lean LSP hook
-  const lsp = useLeanLsp(id, isLean);
+  const leanProjectPath = session?.lean_meta?.absolute_project_path ?? null;
+  const lsp = useLeanLsp(id, isLean, leanProjectPath);
 
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
@@ -54,7 +55,9 @@ function SessionPage() {
   // Compute file URI for LSP
   const getFileUri = useCallback((filename: string) => {
     if (!session) return '';
-    // For lean sessions, the working dir is the Lake project dir
+    if (session.session_type === 'lean' && session.lean_meta?.absolute_project_path) {
+      return `file://${session.lean_meta.absolute_project_path}/${filename}`;
+    }
     return `file://${session.working_dir.startsWith('/') ? '' : '/'}${session.working_dir}/${filename}`;
   }, [session]);
 

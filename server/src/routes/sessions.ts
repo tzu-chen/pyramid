@@ -100,7 +100,8 @@ router.get('/:id', (req: Request, res: Response) => {
     if (session.session_type === 'lean') {
       const leanMeta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(req.params.id);
       if (leanMeta) {
-        result.lean_meta = leanMeta;
+        const absProjectPath = path.resolve(__dirname, '..', '..', 'data', 'lean-projects', req.params.id as string);
+        result.lean_meta = { ...leanMeta as Record<string, unknown>, absolute_project_path: absProjectPath };
       }
     }
 

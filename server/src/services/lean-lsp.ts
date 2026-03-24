@@ -9,19 +9,13 @@ interface LeanProcess {
   lastActivity: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   clients: Set<WebSocket>;
-  stdoutBuffer: string;
+  stdoutBuffer: Buffer;
 }
 
 const processes = new Map<string, LeanProcess>();
 
-function parseContentLength(data: string): { length: number; headerEnd: number } | null {
-  const match = data.match(/Content-Length:\s*(\d+)\r\n\r\n/);
-  if (!match) return null;
-  return {
-    length: parseInt(match[1], 10),
-    headerEnd: match.index! + match[0].length,
-  };
-}
+const HEADER_SEPARATOR = Buffer.from('\r\n\r\n');
+const CONTENT_LENGTH_PREFIX = Buffer.from('Content-Length: ');
 
 function sendToLsp(lp: LeanProcess, message: string): void {
   const header = `Content-Length: ${Buffer.byteLength(message)}\r\n\r\n`;
@@ -38,18 +32,25 @@ function broadcastToClients(lp: LeanProcess, message: string): void {
 
 function processStdout(sessionId: string, lp: LeanProcess): void {
   while (true) {
-    const parsed = parseContentLength(lp.stdoutBuffer);
-    if (!parsed) break;
+    // Find Content-Length header
+    const prefixIdx = lp.stdoutBuffer.indexOf(CONTENT_LENGTH_PREFIX);
+    if (prefixIdx === -1) break;
 
-    const messageStart = parsed.headerEnd;
-    const messageEnd = messageStart + parsed.length;
+    const separatorIdx = lp.stdoutBuffer.indexOf(HEADER_SEPARATOR, prefixIdx);
+    if (separatorIdx === -1) break;
+
+    // Parse Content-Length value
+    const lengthStr = lp.stdoutBuffer.slice(prefixIdx + CONTENT_LENGTH_PREFIX.length, separatorIdx).toString('ascii');
+    const contentLength = parseInt(lengthStr, 10);
+    if (isNaN(contentLength)) break;
+
+    const messageStart = separatorIdx + HEADER_SEPARATOR.length;
+    const messageEnd = messageStart + contentLength;
 
     // Check if we have the full message in the buffer
-    if (Buffer.byteLength(lp.stdoutBuffer.slice(messageStart)) < parsed.length) break;
+    if (lp.stdoutBuffer.length < messageEnd) break;
 
-    const message = lp.stdoutBuffer.slice(messageStart, messageStart + parsed.length);
-    // Use byte length for slicing to handle multi-byte chars correctly
-    // Since we're working with strings, recalculate based on character positions
+    const message = lp.stdoutBuffer.slice(messageStart, messageEnd).toString('utf-8');
     lp.stdoutBuffer = lp.stdoutBuffer.slice(messageEnd);
 
     broadcastToClients(lp, message);
@@ -81,11 +82,11 @@ export const leanLsp = {
       lastActivity: Date.now(),
       idleTimer: null,
       clients: new Set(),
-      stdoutBuffer: '',
+      stdoutBuffer: Buffer.alloc(0),
     };
 
     proc.stdout?.on('data', (data: Buffer) => {
-      lp.stdoutBuffer += data.toString();
+      lp.stdoutBuffer = Buffer.concat([lp.stdoutBuffer, data]);
       processStdout(sessionId, lp);
     });
 

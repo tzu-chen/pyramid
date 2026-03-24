@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import path from 'path';
 import db from '../db.js';
 import { leanProject } from '../services/lean-project.js';
 
@@ -8,12 +9,13 @@ const router = Router();
 router.get('/:sessionId/meta', (req: Request, res: Response) => {
   try {
     const sessionId = req.params.sessionId as string;
-    const meta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(sessionId);
+    const meta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(sessionId) as Record<string, unknown> | undefined;
     if (!meta) {
       res.status(404).json({ error: 'Lean session metadata not found' });
       return;
     }
-    res.json(meta);
+    const absProjectPath = path.resolve(__dirname, '..', '..', 'data', 'lean-projects', sessionId);
+    res.json({ ...meta, absolute_project_path: absProjectPath });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
