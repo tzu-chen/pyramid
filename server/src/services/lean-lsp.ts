@@ -25,12 +25,13 @@ function sendToLsp(lp: LeanProcess, message: string): void {
 }
 
 function broadcastToClients(lp: LeanProcess, message: string): void {
-  // Track initialization: capture the initialize response
-  if (!lp.initialized) {
+  // Capture the initialize response for reconnection caching
+  // Note: don't set lp.initialized here — that must wait until the client's
+  // 'initialized' notification is forwarded to Lean (see handleWebSocket)
+  if (!lp.initializeResult) {
     try {
       const parsed = JSON.parse(message);
       if (parsed.id !== undefined && parsed.result?.capabilities) {
-        lp.initialized = true;
         lp.initializeResult = parsed.result;
       }
     } catch { /* not JSON, ignore */ }
@@ -180,12 +181,13 @@ export const leanLsp = {
       lp.lastActivity = Date.now();
       const message = data.toString();
 
-      // Intercept initialize request if LSP is already initialized
-      if (lp.initialized) {
-        try {
-          const parsed = JSON.parse(message);
-          if (parsed.method === 'initialize' && parsed.id !== undefined) {
-            // Respond with cached initialize result instead of forwarding
+      try {
+        const parsed = JSON.parse(message);
+
+        // Handle initialize request
+        if (parsed.method === 'initialize' && parsed.id !== undefined) {
+          if (lp.initialized && lp.initializeResult) {
+            // Reconnection: respond with cached result
             ws.send(JSON.stringify({
               jsonrpc: '2.0',
               id: parsed.id,
@@ -193,12 +195,22 @@ export const leanLsp = {
             }));
             return;
           }
-          if (parsed.method === 'initialized') {
-            // Already initialized, swallow the notification
-            return;
+          // First connection: forward to Lean
+          sendToLsp(lp, message);
+          return;
+        }
+
+        // Handle initialized notification
+        if (parsed.method === 'initialized') {
+          if (!lp.initialized) {
+            // First connection: forward to Lean, then mark as initialized
+            sendToLsp(lp, message);
+            lp.initialized = true;
           }
-        } catch { /* not JSON, forward as-is */ }
-      }
+          // Reconnection: swallow (Lean already past init)
+          return;
+        }
+      } catch { /* not JSON, forward as-is */ }
 
       sendToLsp(lp, message);
     });
