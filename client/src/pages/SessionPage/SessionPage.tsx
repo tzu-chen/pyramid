@@ -51,6 +51,7 @@ function SessionPage() {
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
   const fileUriRef = useRef<string | null>(null);
+  const lspOpenedFileRef = useRef<string | null>(null);
 
   // Compute file URI for LSP
   const getFileUri = useCallback((filename: string) => {
@@ -90,31 +91,27 @@ function SessionPage() {
     if (id && activeFileId) {
       fileService.getContent(id, activeFileId).then((content) => {
         setFileContent(content);
-
-        // Send didOpen to LSP for lean sessions
-        if (isLean && lsp.initialized && session?.files) {
-          const file = session.files.find(f => f.id === activeFileId);
-          if (file) {
-            const uri = getFileUri(file.filename);
-            fileUriRef.current = uri;
-            lsp.sendDidOpen(uri, content);
-          }
-        }
       }).catch(() => {});
     }
   }, [id, activeFileId]);
 
-  // Send didOpen when LSP becomes initialized (if file already loaded)
+  // Reset LSP opened-file tracking on file switch or reconnection
   useEffect(() => {
-    if (isLean && lsp.initialized && fileContent && session?.files && activeFileId) {
-      const file = session.files.find(f => f.id === activeFileId);
-      if (file) {
-        const uri = getFileUri(file.filename);
-        fileUriRef.current = uri;
-        lsp.sendDidOpen(uri, fileContent);
-      }
+    lspOpenedFileRef.current = null;
+  }, [activeFileId, lsp.initialized]);
+
+  // Send didOpen and set fileUriRef when all conditions are met
+  useEffect(() => {
+    if (!isLean || !lsp.initialized || !fileContent || !session?.files || !activeFileId) return;
+    const file = session.files.find(f => f.id === activeFileId);
+    if (!file) return;
+    const uri = getFileUri(file.filename);
+    fileUriRef.current = uri;
+    if (lspOpenedFileRef.current !== uri) {
+      lsp.sendDidOpen(uri, fileContent);
+      lspOpenedFileRef.current = uri;
     }
-  }, [lsp.initialized]);
+  }, [isLean, lsp.initialized, fileContent, activeFileId, session?.files, getFileUri, lsp.sendDidOpen]);
 
   // Auto-save notes
   useEffect(() => {
