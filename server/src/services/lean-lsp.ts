@@ -11,6 +11,7 @@ interface LeanProcess {
   clients: Set<WebSocket>;
   stdoutBuffer: Buffer;
   initialized: boolean;
+  initializePending: boolean;
   initializeResult: unknown | null;
 }
 
@@ -33,6 +34,7 @@ function broadcastToClients(lp: LeanProcess, message: string): void {
       const parsed = JSON.parse(message);
       if (parsed.id !== undefined && parsed.result?.capabilities) {
         lp.initializeResult = parsed.result;
+        lp.initializePending = false;
       }
     } catch { /* not JSON, ignore */ }
   }
@@ -98,6 +100,7 @@ export const leanLsp = {
       clients: new Set(),
       stdoutBuffer: Buffer.alloc(0),
       initialized: false,
+      initializePending: false,
       initializeResult: null,
     };
 
@@ -195,7 +198,14 @@ export const leanLsp = {
             }));
             return;
           }
+          if (lp.initializePending) {
+            // Another initialize is already in flight — don't forward a second
+            // one to Lean (it would crash with "Expected JSON-RPC notification")
+            console.warn(`[lean-lsp:${sessionId.slice(0, 8)}] Dropping duplicate initialize request (one already in flight)`);
+            return;
+          }
           // First connection: forward to Lean
+          lp.initializePending = true;
           sendToLsp(lp, message);
           return;
         }

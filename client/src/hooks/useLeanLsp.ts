@@ -29,6 +29,22 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
   const connect = useCallback(() => {
     if (!sessionId || !enabled || (enabled && !projectPath)) return;
 
+    // Cancel any pending reconnect from a previous connection
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    // Close any existing connection cleanly before creating a new one
+    if (wsRef.current) {
+      const oldWs = wsRef.current;
+      wsRef.current = null; // Clear ref BEFORE closing so onclose knows it's stale
+      oldWs.onclose = null; // Remove handler to prevent stale onclose from firing
+      oldWs.onerror = null;
+      oldWs.onmessage = null;
+      oldWs.close();
+    }
+
     // Determine WebSocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -141,6 +157,12 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     };
 
     ws.onclose = () => {
+      // Only reset state if this is still the current WebSocket.
+      // If a newer WS has already replaced us (wsRef.current !== ws),
+      // this is a stale close event — ignore it to avoid corrupting
+      // the newer connection's state.
+      if (wsRef.current !== ws) return;
+
       setState(s => ({ ...s, connected: false, initialized: false }));
       wsRef.current = null;
       fileOpenedRef.current = false;
@@ -169,10 +191,15 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     return () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
-        wsRef.current.close();
+        const oldWs = wsRef.current;
         wsRef.current = null;
+        oldWs.onclose = null; // Prevent stale onclose handler
+        oldWs.onerror = null;
+        oldWs.onmessage = null;
+        oldWs.close();
       }
       fileOpenedRef.current = false;
     };
