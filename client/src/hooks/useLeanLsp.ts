@@ -129,6 +129,9 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
       setState(s => ({ ...s, connected: false, initialized: false }));
       wsRef.current = null;
       fileOpenedRef.current = false;
+      requestIdRef.current = 1;
+      pendingRef.current.clear();
+      versionRef.current = 0;
 
       // Reconnect after delay
       if (enabled) {
