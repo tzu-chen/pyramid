@@ -8,6 +8,7 @@ const LEAN_PROJECTS_DIR = path.join(DATA_DIR, 'lean-projects');
 const LEAN_SHARED_DIR = path.join(DATA_DIR, 'lean-shared');
 const SHARED_MATHLIB_DIR = path.join(LEAN_SHARED_DIR, 'mathlib');
 const DEFAULT_LEAN_VERSION = 'leanprover/lean4:v4.16.0';
+const MATHLIB_TAG = 'v4.16.0'; // Must match DEFAULT_LEAN_VERSION
 const MATHLIB_REPO = 'https://github.com/leanprover-community/mathlib4.git';
 
 function getCstTimestamp(): string {
@@ -16,13 +17,20 @@ function getCstTimestamp(): string {
   return cst.toISOString().replace('Z', '-06:00');
 }
 
-function runCommand(cmd: string, args: string[], cwd: string, timeoutMs = 300000): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+function runCommand(
+  cmd: string, args: string[], cwd: string,
+  timeoutMs = 300000, env?: Record<string, string>
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let killed = false;
 
-    const proc = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn(cmd, args, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: env ? { ...process.env, ...env } : undefined,
+    });
     proc.stdin.end();
 
     proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
@@ -68,12 +76,12 @@ async function ensureSharedMathlib(): Promise<void> {
 
   sharedMathlibPromise = (async () => {
     try {
-      // Clone the actual Mathlib4 repo if not already present
+      // Step 1: Clone Mathlib4 at pinned stable tag (per official wiki)
       if (!fs.existsSync(path.join(SHARED_MATHLIB_DIR, '.git'))) {
         fs.mkdirSync(LEAN_SHARED_DIR, { recursive: true });
-        console.log('Cloning Mathlib4 repository (this may take a while on first run)...');
+        console.log(`Cloning Mathlib4 at tag ${MATHLIB_TAG} (one-time setup)...`);
         const cloneResult = await runCommand(
-          'git', ['clone', '--depth', '1', MATHLIB_REPO, SHARED_MATHLIB_DIR],
+          'git', ['clone', '--depth', '1', '--branch', MATHLIB_TAG, MATHLIB_REPO, SHARED_MATHLIB_DIR],
           LEAN_SHARED_DIR, 600000
         );
         if (cloneResult.exitCode !== 0) {
@@ -90,17 +98,22 @@ async function ensureSharedMathlib(): Promise<void> {
         }
       }
 
-      // Run lake exe cache get to download prebuilt oleans
+      // Step 2: Download prebuilt oleans
       console.log('Downloading Mathlib cache...');
       const result = await runCommand('lake', ['exe', 'cache', 'get'], SHARED_MATHLIB_DIR, 600000);
-
-      if (result.exitCode === 0) {
-        fs.writeFileSync(path.join(SHARED_MATHLIB_DIR, '.ready'), new Date().toISOString());
-        sharedMathlibReady = true;
-        console.log('Shared Mathlib cache ready.');
-      } else {
+      if (result.exitCode !== 0) {
         throw new Error(`lake exe cache get failed: ${result.stderr}`);
       }
+
+      // Step 3: Protect shared build artifacts (per official wiki)
+      const lakeBuildDir = path.join(SHARED_MATHLIB_DIR, '.lake', 'build');
+      if (fs.existsSync(lakeBuildDir)) {
+        await runCommand('chmod', ['-R', 'u-w', lakeBuildDir], SHARED_MATHLIB_DIR);
+      }
+
+      fs.writeFileSync(path.join(SHARED_MATHLIB_DIR, '.ready'), new Date().toISOString());
+      sharedMathlibReady = true;
+      console.log('Shared Mathlib cache ready.');
     } catch (err) {
       sharedMathlibPromise = null;
       throw err;
@@ -135,7 +148,7 @@ path = "${relMathlibPath}"
 `;
     fs.writeFileSync(path.join(projectDir, 'lakefile.toml'), lakefile);
 
-    // Write lean-toolchain
+    // Write lean-toolchain (must match shared Mathlib)
     fs.writeFileSync(path.join(projectDir, 'lean-toolchain'), DEFAULT_LEAN_VERSION + '\n');
 
     // Create Main.lean with starter import
@@ -144,10 +157,38 @@ path = "${relMathlibPath}"
 `;
     fs.writeFileSync(path.join(projectDir, 'Main.lean'), mainLean);
 
-    // Shared Mathlib is available via local path — no per-session lake commands needed
+    // Per-session setup (per official Mathlib wiki for globally shared installation)
     const now = getCstTimestamp();
     db.prepare('UPDATE lean_session_meta SET lake_status = ?, updated_at = ? WHERE session_id = ?')
-      .run('ready', now, sessionId);
+      .run('initializing', now, sessionId);
+
+    try {
+      // Generate lake-manifest.json pointing to shared Mathlib
+      const updateResult = await runCommand(
+        'lake', ['update', '-R', 'mathlib'], projectDir, 300000,
+        { MATHLIB_NO_CACHE_ON_UPDATE: '1' }
+      );
+      if (updateResult.exitCode !== 0) {
+        throw new Error(`lake update failed: ${updateResult.stderr}`);
+      }
+
+      // Cache project's own files (near-instant for a single .lean file)
+      await runCommand('lake', ['exe', 'cache', 'get'], projectDir);
+
+      // Remove redundant local Mathlib copy (per wiki — use shared one)
+      const localMathlibPkg = path.join(projectDir, '.lake', 'packages', 'mathlib');
+      if (fs.existsSync(localMathlibPkg)) {
+        fs.rmSync(localMathlibPkg, { recursive: true, force: true });
+      }
+
+      const updateNow = getCstTimestamp();
+      db.prepare('UPDATE lean_session_meta SET lake_status = ?, updated_at = ? WHERE session_id = ?')
+        .run('ready', updateNow, sessionId);
+    } catch (err) {
+      const updateNow = getCstTimestamp();
+      db.prepare('UPDATE lean_session_meta SET lake_status = ?, last_build_output = ?, updated_at = ? WHERE session_id = ?')
+        .run('error', (err as Error).message, updateNow, sessionId);
+    }
   },
 
   deleteProject(sessionId: string): void {
