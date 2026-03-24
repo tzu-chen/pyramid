@@ -10,6 +10,8 @@ interface LeanProcess {
   idleTimer: ReturnType<typeof setTimeout> | null;
   clients: Set<WebSocket>;
   stdoutBuffer: Buffer;
+  initialized: boolean;
+  initializeResult: unknown | null;
 }
 
 const processes = new Map<string, LeanProcess>();
@@ -23,6 +25,17 @@ function sendToLsp(lp: LeanProcess, message: string): void {
 }
 
 function broadcastToClients(lp: LeanProcess, message: string): void {
+  // Track initialization: capture the initialize response
+  if (!lp.initialized) {
+    try {
+      const parsed = JSON.parse(message);
+      if (parsed.id !== undefined && parsed.result?.capabilities) {
+        lp.initialized = true;
+        lp.initializeResult = parsed.result;
+      }
+    } catch { /* not JSON, ignore */ }
+  }
+
   for (const ws of lp.clients) {
     if (ws.readyState === 1) { // WebSocket.OPEN
       ws.send(message);
@@ -83,6 +96,8 @@ export const leanLsp = {
       idleTimer: null,
       clients: new Set(),
       stdoutBuffer: Buffer.alloc(0),
+      initialized: false,
+      initializeResult: null,
     };
 
     proc.stdout?.on('data', (data: Buffer) => {
@@ -164,6 +179,27 @@ export const leanLsp = {
     ws.on('message', (data) => {
       lp.lastActivity = Date.now();
       const message = data.toString();
+
+      // Intercept initialize request if LSP is already initialized
+      if (lp.initialized) {
+        try {
+          const parsed = JSON.parse(message);
+          if (parsed.method === 'initialize' && parsed.id !== undefined) {
+            // Respond with cached initialize result instead of forwarding
+            ws.send(JSON.stringify({
+              jsonrpc: '2.0',
+              id: parsed.id,
+              result: lp.initializeResult,
+            }));
+            return;
+          }
+          if (parsed.method === 'initialized') {
+            // Already initialized, swallow the notification
+            return;
+          }
+        } catch { /* not JSON, forward as-is */ }
+      }
+
       sendToLsp(lp, message);
     });
 
