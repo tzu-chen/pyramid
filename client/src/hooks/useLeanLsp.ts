@@ -94,6 +94,9 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
             if (msg.result) {
               const rendered = msg.result.rendered || msg.result.goals?.join('\n\n') || '';
               setState(s => ({ ...s, goalState: rendered || null }));
+            } else if (msg.error) {
+              console.warn('[lean-lsp] plainGoal error:', msg.error.code, msg.error.message || msg.error);
+              setState(s => ({ ...s, goalState: null }));
             } else {
               setState(s => ({ ...s, goalState: null }));
             }
