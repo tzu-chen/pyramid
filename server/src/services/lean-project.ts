@@ -8,6 +8,7 @@ const LEAN_PROJECTS_DIR = path.join(DATA_DIR, 'lean-projects');
 const LEAN_SHARED_DIR = path.join(DATA_DIR, 'lean-shared');
 const SHARED_MATHLIB_DIR = path.join(LEAN_SHARED_DIR, 'mathlib');
 const DEFAULT_LEAN_VERSION = 'leanprover/lean4:v4.16.0';
+const MATHLIB_REPO = 'https://github.com/leanprover-community/mathlib4.git';
 
 function getCstTimestamp(): string {
   const now = new Date();
@@ -67,23 +68,30 @@ async function ensureSharedMathlib(): Promise<void> {
 
   sharedMathlibPromise = (async () => {
     try {
-      fs.mkdirSync(SHARED_MATHLIB_DIR, { recursive: true });
+      // Clone the actual Mathlib4 repo if not already present
+      if (!fs.existsSync(path.join(SHARED_MATHLIB_DIR, '.git'))) {
+        fs.mkdirSync(LEAN_SHARED_DIR, { recursive: true });
+        console.log('Cloning Mathlib4 repository (this may take a while on first run)...');
+        const cloneResult = await runCommand(
+          'git', ['clone', '--depth', '1', MATHLIB_REPO, SHARED_MATHLIB_DIR],
+          LEAN_SHARED_DIR, 600000
+        );
+        if (cloneResult.exitCode !== 0) {
+          throw new Error(`git clone failed: ${cloneResult.stderr}`);
+        }
+      }
 
-      // Write a minimal lakefile.toml for the shared Mathlib project
-      const lakefile = `name = "mathlib-shared"
+      // Verify lean-toolchain compatibility
+      const toolchainPath = path.join(SHARED_MATHLIB_DIR, 'lean-toolchain');
+      if (fs.existsSync(toolchainPath)) {
+        const mathlibToolchain = fs.readFileSync(toolchainPath, 'utf-8').trim();
+        if (mathlibToolchain !== DEFAULT_LEAN_VERSION) {
+          console.warn(`Warning: Mathlib lean-toolchain (${mathlibToolchain}) differs from expected (${DEFAULT_LEAN_VERSION})`);
+        }
+      }
 
-[[require]]
-name = "mathlib"
-scope = "leanprover-community"
-`;
-      fs.writeFileSync(path.join(SHARED_MATHLIB_DIR, 'lakefile.toml'), lakefile);
-      fs.writeFileSync(path.join(SHARED_MATHLIB_DIR, 'lean-toolchain'), DEFAULT_LEAN_VERSION + '\n');
-
-      // Create a minimal .lean file so Lake is happy
-      fs.writeFileSync(path.join(SHARED_MATHLIB_DIR, 'Main.lean'), '');
-
-      // Run lake exe cache get once for the shared project
-      console.log('Initializing shared Mathlib cache (this may take a while on first run)...');
+      // Run lake exe cache get to download prebuilt oleans
+      console.log('Downloading Mathlib cache...');
       const result = await runCommand('lake', ['exe', 'cache', 'get'], SHARED_MATHLIB_DIR, 600000);
 
       if (result.exitCode === 0) {
@@ -136,23 +144,10 @@ path = "${relMathlibPath}"
 `;
     fs.writeFileSync(path.join(projectDir, 'Main.lean'), mainLean);
 
-    // Update lake_status to initializing
+    // Shared Mathlib is available via local path — no per-session lake commands needed
     const now = getCstTimestamp();
     db.prepare('UPDATE lean_session_meta SET lake_status = ?, updated_at = ? WHERE session_id = ?')
-      .run('initializing', now, sessionId);
-
-    // Run lake update to resolve dependencies from shared Mathlib
-    try {
-      const result = await runCommand('lake', ['update'], projectDir);
-      const status = result.exitCode === 0 ? 'ready' : 'error';
-      const updateNow = getCstTimestamp();
-      db.prepare('UPDATE lean_session_meta SET lake_status = ?, last_build_output = ?, updated_at = ? WHERE session_id = ?')
-        .run(status, (result.stdout + '\n' + result.stderr).trim(), updateNow, sessionId);
-    } catch (err) {
-      const updateNow = getCstTimestamp();
-      db.prepare('UPDATE lean_session_meta SET lake_status = ?, last_build_output = ?, updated_at = ? WHERE session_id = ?')
-        .run('error', (err as Error).message, updateNow, sessionId);
-    }
+      .run('ready', now, sessionId);
   },
 
   deleteProject(sessionId: string): void {
