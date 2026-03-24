@@ -107,6 +107,7 @@ export interface LeanSessionMeta {
   last_build_at: string | null;
   created_at: string;
   updated_at: string;
+  absolute_project_path?: string;
 }
 
 export interface SessionDetail extends Session {

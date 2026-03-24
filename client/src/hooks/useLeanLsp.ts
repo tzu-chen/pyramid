@@ -9,7 +9,7 @@ interface LspState {
   messages: string[];
 }
 
-export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
+export function useLeanLsp(sessionId: string | undefined, enabled: boolean, projectPath: string | null = null) {
   const [state, setState] = useState<LspState>({
     connected: false,
     initialized: false,
@@ -27,7 +27,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
   const fileOpenedRef = useRef(false);
 
   const connect = useCallback(() => {
-    if (!sessionId || !enabled) return;
+    if (!sessionId || !enabled || (enabled && !projectPath)) return;
 
     // Determine WebSocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -67,8 +67,8 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
               publishDiagnostics: { relatedInformation: true },
             },
           },
-          rootUri: null,
-          workspaceFolders: null,
+          rootUri: projectPath ? `file://${projectPath}` : null,
+          workspaceFolders: projectPath ? [{ uri: `file://${projectPath}`, name: 'pyramid-session' }] : null,
         },
       }));
     };
@@ -141,7 +141,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean) {
     ws.onerror = () => {
       // onclose will handle reconnection
     };
-  }, [sessionId, enabled]);
+  }, [sessionId, enabled, projectPath]);
 
   useEffect(() => {
     if (enabled && sessionId) {
