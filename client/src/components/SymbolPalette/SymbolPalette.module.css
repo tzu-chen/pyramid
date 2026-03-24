@@ -1,0 +1,45 @@
+.palette {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  padding: 2px var(--space-2);
+  background-color: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  gap: 0;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.groupSep {
+  width: 1px;
+  height: 16px;
+  background-color: var(--color-border);
+  margin: 0 var(--space-1);
+  flex-shrink: 0;
+}
+
+.symbolBtn {
+  min-width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 1;
+}
+
+.symbolBtn:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}

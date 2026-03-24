@@ -1,0 +1,31 @@
+const FONT_SIZE_KEY = 'pyramid_editor_font_size';
+const DEFAULT_FONT_SIZE = 13;
+const MIN_FONT_SIZE = 10;
+const MAX_FONT_SIZE = 24;
+
+function clamp(value: number): number {
+  return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, value));
+}
+
+export const editorStorage = {
+  getFontSize(): number {
+    try {
+      const stored = localStorage.getItem(FONT_SIZE_KEY);
+      if (stored) {
+        const parsed = parseInt(stored, 10);
+        if (!isNaN(parsed)) return clamp(parsed);
+      }
+    } catch { /* localStorage unavailable */ }
+    return DEFAULT_FONT_SIZE;
+  },
+
+  saveFontSize(size: number): void {
+    try {
+      localStorage.setItem(FONT_SIZE_KEY, String(clamp(size)));
+    } catch { /* localStorage unavailable */ }
+  },
+
+  MIN_FONT_SIZE,
+  MAX_FONT_SIZE,
+  DEFAULT_FONT_SIZE,
+};

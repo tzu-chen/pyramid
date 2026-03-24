@@ -13,7 +13,10 @@ import CodeEditor from '../../components/CodeEditor/CodeEditor';
 import FileTree from '../../components/FileTree/FileTree';
 import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer';
 import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
+import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
+import { useEditorFontSize } from '../../hooks/useEditorFontSize';
+import { editorStorage } from '../../services/editorStorage';
 import { ExecutionRun, SessionFile, TestResult, LakeStatus } from '../../types';
 import styles from './SessionPage.module.css';
 
@@ -36,6 +39,10 @@ function SessionPage() {
   const [repoFilePath, setRepoFilePath] = useState<string | null>(null);
   const [repoFileContent, setRepoFileContent] = useState('');
   const [repoFileLoading, setRepoFileLoading] = useState(false);
+
+  // Editor font size and symbol insertion
+  const { fontSize, increase: fontIncrease, decrease: fontDecrease } = useEditorFontSize();
+  const insertRef = useRef<((text: string) => void) | null>(null);
 
   // Lean-specific state
   const [building, setBuilding] = useState(false);
@@ -291,6 +298,30 @@ function SessionPage() {
               ))}
             </div>
           )}
+          <div className={styles.editorToolbar}>
+            {isLean && (
+              <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
+            )}
+            <div className={styles.fontSizeControls}>
+              <button
+                className={styles.fontSizeBtn}
+                onClick={fontDecrease}
+                disabled={fontSize <= editorStorage.MIN_FONT_SIZE}
+                title="Decrease font size"
+              >
+                A−
+              </button>
+              <span className={styles.fontSizeLabel}>{fontSize}px</span>
+              <button
+                className={styles.fontSizeBtn}
+                onClick={fontIncrease}
+                disabled={fontSize >= editorStorage.MAX_FONT_SIZE}
+                title="Increase font size"
+              >
+                A+
+              </button>
+            </div>
+          </div>
           <div className={styles.editorContainer}>
             <CodeEditor
               value={fileContent}
@@ -298,6 +329,8 @@ function SessionPage() {
               onChange={handleSaveFile}
               onCursorChange={isLean ? handleCursorChange : undefined}
               diagnostics={isLean ? lsp.diagnostics : undefined}
+              fontSize={fontSize}
+              onInsertRef={insertRef}
             />
           </div>
         </div>

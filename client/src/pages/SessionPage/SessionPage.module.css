@@ -127,6 +127,54 @@
   border-bottom-color: var(--color-primary);
 }
 
+.editorToolbar {
+  display: flex;
+  align-items: center;
+  background-color: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.fontSizeControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  margin-left: auto;
+}
+
+.fontSizeBtn {
+  padding: 2px var(--space-2);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.fontSizeBtn:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.fontSizeBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fontSizeLabel {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+  min-width: 32px;
+  text-align: center;
+}
+
 .editorContainer {
   flex: 1;
   overflow: hidden;
