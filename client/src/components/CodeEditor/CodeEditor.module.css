@@ -12,5 +12,5 @@
 
 .editor .cm-scroller {
   font-family: var(--font-mono);
-  font-size: var(--editor-font-size, var(--font-size-sm));
+  font-size: var(--font-size-sm);
 }
