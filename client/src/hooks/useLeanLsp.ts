@@ -108,7 +108,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
               params: {},
             }));
             setState(s => ({ ...s, initialized: true }));
-          } else if (method === 'Lean/plainGoal') {
+          } else if (method === '$/lean/plainGoal') {
             if (msg.result) {
               const rendered = msg.result.rendered || msg.result.goals?.join('\n\n') || '';
               setState(s => ({ ...s, goalState: rendered || null }));
@@ -259,12 +259,12 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     if (!ws || ws.readyState !== WebSocket.OPEN || !initializedRef.current) return;
 
     const id = requestIdRef.current++;
-    pendingRef.current.set(id, 'Lean/plainGoal');
+    pendingRef.current.set(id, '$/lean/plainGoal');
 
     ws.send(JSON.stringify({
       jsonrpc: '2.0',
       id,
-      method: 'Lean/plainGoal',
+      method: '$/lean/plainGoal',
       params: {
         textDocument: { uri },
         position: { line, character },
