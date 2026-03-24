@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, MutableRefObject } from 'react';
+import { useEffect, useRef, useCallback, MutableRefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Extension, Compartment } from '@codemirror/state';
 import { ViewPlugin, ViewUpdate } from '@codemirror/view';
@@ -208,6 +208,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
+  const fontSizeCompartment = useRef(new Compartment());
+  const fontSizeRef = useRef(fontSize);
   const { scheme } = useTheme();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -250,6 +252,12 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
     if (readOnly) {
       extensions.push(EditorState.readOnly.of(true));
     }
+
+    // Font size via compartment — updates without recreating editor
+    const fs = fontSizeRef.current || 13;
+    extensions.push(fontSizeCompartment.current.of(
+      EditorView.theme({ '.cm-scroller': { fontSize: `${fs}px` } })
+    ));
 
     // LSP diagnostics via compartment — updates without recreating editor
     extensions.push(diagnosticsCompartment.current.of([]));
@@ -322,6 +330,18 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
     });
   }, [diagnostics]);
 
+  // Update font size without recreating the editor
+  useEffect(() => {
+    fontSizeRef.current = fontSize;
+    const view = viewRef.current;
+    if (!view || !fontSize) return;
+    view.dispatch({
+      effects: fontSizeCompartment.current.reconfigure(
+        EditorView.theme({ '.cm-scroller': { fontSize: `${fontSize}px` } })
+      ),
+    });
+  }, [fontSize]);
+
   // Update content from outside
   useEffect(() => {
     if (viewRef.current) {
@@ -338,13 +358,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
     }
   }, [value]);
 
-  return (
-    <div
-      ref={containerRef}
-      className={styles.editor}
-      style={fontSize ? { '--editor-font-size': `${fontSize}px` } as React.CSSProperties : undefined}
-    />
-  );
+  return <div ref={containerRef} className={styles.editor} />;
 }
 
 export default CodeEditor;
