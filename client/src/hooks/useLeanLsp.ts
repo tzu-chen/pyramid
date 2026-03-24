@@ -77,8 +77,10 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
       try {
         const msg = JSON.parse(event.data);
 
-        // Handle response to our request
-        if (msg.id !== undefined && msg.id !== null) {
+        // Handle response to our request (has id, but NO method — distinguishes
+        // responses from server-initiated requests like window/workDoneProgress/create
+        // which also carry an id)
+        if (msg.id !== undefined && msg.id !== null && !msg.method) {
           const method = pendingRef.current.get(msg.id);
           pendingRef.current.delete(msg.id);
 
@@ -103,7 +105,17 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
           }
         }
 
-        // Handle notifications
+        // Handle server-initiated requests (has both id and method) — respond
+        // so Lean doesn't hang waiting
+        if (msg.id !== undefined && msg.id !== null && msg.method) {
+          ws.send(JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: null,
+          }));
+        }
+
+        // Handle notifications (has method, no id)
         if (msg.method) {
           if (msg.method === 'textDocument/publishDiagnostics') {
             const diags: LspDiagnostic[] = (msg.params.diagnostics || []).map((d: {
