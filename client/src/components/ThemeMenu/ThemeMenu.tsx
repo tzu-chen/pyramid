@@ -1,11 +1,14 @@
 import { useState, useRef } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
+import { editorStorage } from '../../services/editorStorage';
 import { COLOR_SCHEMES } from '../../colorSchemes';
 import { CloseIcon, PaletteIcon } from '../Icons/Icons';
 import styles from './ThemeMenu.module.css';
 
 export function ThemeMenu() {
   const { schemeId, setScheme, autoSwitch, setAutoSwitch } = useTheme();
+  const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
   const [open, setOpen] = useState(false);
   const overlayMouseDownRef = useRef(false);
 
@@ -61,6 +64,33 @@ export function ThemeMenu() {
                 >
                   <span className={styles.toggleThumb} />
                 </button>
+              </div>
+              <div className={styles.fontSizeRow}>
+                <div className={styles.autoSwitchInfo}>
+                  <span className={styles.autoSwitchLabel}>Editor font size</span>
+                </div>
+                <div className={styles.fontSizeControls}>
+                  <button
+                    className={styles.fontSizeBtn}
+                    onClick={fontDecrease}
+                    disabled={fontSize <= editorStorage.MIN_FONT_SIZE}
+                  >
+                    A−
+                  </button>
+                  <span className={styles.fontSizeValue}>{fontSize}px</span>
+                  <button
+                    className={styles.fontSizeBtn}
+                    onClick={fontIncrease}
+                    disabled={fontSize >= editorStorage.MAX_FONT_SIZE}
+                  >
+                    A+
+                  </button>
+                  {fontSize !== editorStorage.DEFAULT_FONT_SIZE && (
+                    <button className={styles.fontSizeReset} onClick={fontReset}>
+                      Reset
+                    </button>
+                  )}
+                </div>
               </div>
               <div className={styles.grid}>
                 {COLOR_SCHEMES.map(scheme => (
