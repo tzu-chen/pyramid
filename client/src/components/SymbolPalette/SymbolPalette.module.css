@@ -1,36 +1,82 @@
-.palette {
+.container {
+  position: relative;
   display: flex;
-  overflow-x: auto;
-  gap: var(--space-2);
-  padding: 4px var(--space-2);
+  align-items: center;
+  padding: 2px var(--space-2);
   background-color: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
-.group {
+.triggerBtn {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.triggerBtn:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.triggerIcon {
+  font-size: var(--font-size-base);
+}
+
+.chevron {
+  font-size: 10px;
+}
+
+.popover {
+  position: absolute;
+  top: 100%;
+  left: var(--space-2);
+  z-index: 100;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.group {
+  margin-bottom: var(--space-3);
+}
+
+.group:last-child {
+  margin-bottom: 0;
 }
 
 .groupLabel {
-  font-size: 10px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
   color: var(--color-text-tertiary);
-  padding-left: 2px;
-  line-height: 1;
+  text-transform: uppercase;
+  margin-bottom: var(--space-1);
+  display: block;
   user-select: none;
 }
 
-.groupSymbols {
-  display: flex;
-  gap: 0;
+.symbolGrid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 1px;
 }
 
 .symbolBtn {
-  min-width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
