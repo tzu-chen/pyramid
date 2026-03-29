@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -313,7 +313,7 @@ function SessionPage() {
           </div>
         </div>
 
-        <div className={styles.rightPane}>
+        <div className={styles.rightPane} style={{ '--panel-font-size': `${fontSize}px` } as React.CSSProperties}>
           <div className={styles.tabs}>
             {isLean ? (
               <>
