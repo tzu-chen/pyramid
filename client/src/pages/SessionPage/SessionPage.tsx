@@ -15,8 +15,7 @@ import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer
 import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
-import { useEditorFontSize } from '../../hooks/useEditorFontSize';
-import { editorStorage } from '../../services/editorStorage';
+import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { ExecutionRun, SessionFile, TestResult, LakeStatus } from '../../types';
 import styles from './SessionPage.module.css';
 
@@ -41,7 +40,7 @@ function SessionPage() {
   const [repoFileLoading, setRepoFileLoading] = useState(false);
 
   // Editor font size and symbol insertion
-  const { fontSize, increase: fontIncrease, decrease: fontDecrease } = useEditorFontSize();
+  const { fontSize } = useEditorFontSize();
   const insertRef = useRef<((text: string) => void) | null>(null);
 
   // Lean-specific state
@@ -298,30 +297,9 @@ function SessionPage() {
               ))}
             </div>
           )}
-          <div className={styles.editorToolbar}>
-            {isLean && (
-              <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
-            )}
-            <div className={styles.fontSizeControls}>
-              <button
-                className={styles.fontSizeBtn}
-                onClick={fontDecrease}
-                disabled={fontSize <= editorStorage.MIN_FONT_SIZE}
-                title="Decrease font size"
-              >
-                A−
-              </button>
-              <span className={styles.fontSizeLabel}>{fontSize}px</span>
-              <button
-                className={styles.fontSizeBtn}
-                onClick={fontIncrease}
-                disabled={fontSize >= editorStorage.MAX_FONT_SIZE}
-                title="Increase font size"
-              >
-                A+
-              </button>
-            </div>
-          </div>
+          {isLean && (
+            <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
+          )}
           <div className={styles.editorContainer}>
             <CodeEditor
               value={fileContent}
