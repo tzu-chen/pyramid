@@ -16,6 +16,7 @@ import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
+import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, TestResult, LakeStatus } from '../../types';
 import styles from './SessionPage.module.css';
 
@@ -42,6 +43,14 @@ function SessionPage() {
   // Editor font size and symbol insertion
   const { fontSize } = useEditorFontSize();
   const insertRef = useRef<((text: string) => void) | null>(null);
+
+  // Resizable split pane
+  const { ratio, onDragStart, containerRef } = useResizablePanel({
+    storageKey: 'pyramid_panel_ratio',
+    defaultRatio: 0.6,
+    minRatio: 0.25,
+    maxRatio: 0.8,
+  });
 
   // Lean-specific state
   const [building, setBuilding] = useState(false);
@@ -282,8 +291,8 @@ function SessionPage() {
         </div>
       </div>
 
-      <div className={styles.workbench}>
-        <div className={styles.editorPane}>
+      <div className={styles.workbench} ref={containerRef}>
+        <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
           {session.files.length > 1 && (
             <div className={styles.fileTabs}>
               {session.files.map((f: SessionFile) => (
@@ -313,7 +322,12 @@ function SessionPage() {
           </div>
         </div>
 
-        <div className={styles.rightPane} style={{ '--panel-font-size': `${fontSize}px` } as React.CSSProperties}>
+        <div
+          className={styles.divider}
+          onMouseDown={onDragStart}
+          onTouchStart={onDragStart}
+        />
+        <div className={styles.rightPane} style={{ flexBasis: `${(1 - ratio) * 100}%`, '--panel-font-size': `${fontSize}px` } as React.CSSProperties}>
           <div className={styles.tabs}>
             {isLean ? (
               <>
