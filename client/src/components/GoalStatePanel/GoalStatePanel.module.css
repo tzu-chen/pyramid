@@ -1,7 +1,7 @@
 .panel {
   padding: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: inherit;
   line-height: 1.6;
 }
 

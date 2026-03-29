@@ -167,6 +167,7 @@
 .tabContent {
   flex: 1;
   overflow-y: auto;
+  font-size: var(--panel-font-size, var(--font-size-sm));
 }
 
 /* Output */
@@ -199,7 +200,7 @@
 .stdout,
 .stderr {
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: inherit;
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
@@ -222,7 +223,7 @@
   color: var(--color-text-tertiary);
   padding: var(--space-6);
   text-align: center;
-  font-size: var(--font-size-sm);
+  font-size: inherit;
 }
 
 .runHistory {
@@ -273,7 +274,7 @@
   outline: none;
   resize: none;
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: inherit;
   background-color: var(--color-bg);
   color: var(--color-text);
   line-height: 1.6;
@@ -515,7 +516,7 @@
 
 .buildOutputContent {
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: inherit;
   background-color: var(--color-bg-tertiary);
   padding: var(--space-3);
   border-radius: var(--radius-md);
@@ -534,7 +535,7 @@
 
 .lspMessage {
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: inherit;
   color: var(--color-text-secondary);
   padding: var(--space-1) var(--space-2);
   background-color: var(--color-bg-tertiary);
