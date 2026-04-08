@@ -1,6 +1,7 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { ThemeMenu } from '../ThemeMenu/ThemeMenu';
+import SettingsModal from '../SettingsModal/SettingsModal';
 import styles from './Layout.module.css';
 
 interface LayoutProps {
@@ -8,6 +9,8 @@ interface LayoutProps {
 }
 
 function Layout({ children }: LayoutProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   return (
     <div className={styles.layout}>
       <aside className={styles.sidebar}>
@@ -24,20 +27,18 @@ function Layout({ children }: LayoutProps) {
           <NavLink to="/sessions/new" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.active : ''}`}>
             New Session
           </NavLink>
-          <NavLink to="/cp" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.active : ''}`}>
-            CP Practice
-          </NavLink>
-          <NavLink to="/repos" className={({ isActive }) => `${styles.navLink} ${isActive ? styles.active : ''}`}>
-            Repos
-          </NavLink>
         </nav>
         <div className={styles.sidebarFooter}>
           <ThemeMenu />
+          <button className={styles.settingsBtn} onClick={() => setSettingsOpen(true)}>
+            Settings
+          </button>
         </div>
       </aside>
       <main className={styles.main}>
         {children}
       </main>
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

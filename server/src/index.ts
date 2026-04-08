@@ -8,11 +8,11 @@ import db from './db.js';
 import sessionsRouter from './routes/sessions.js';
 import filesRouter from './routes/files.js';
 import executionRouter from './routes/execution.js';
-import cpRouter from './routes/cp.js';
-import reposRouter from './routes/repos.js';
 import statsRouter from './routes/stats.js';
 import settingsRouter from './routes/settings.js';
 import leanRouter from './routes/lean.js';
+import claudeRouter from './routes/claude.js';
+import scribeProxyRouter from './routes/scribe-proxy.js';
 import { leanLsp } from './services/lean-lsp.js';
 
 const app = express();
@@ -25,11 +25,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/sessions', filesRouter);
 app.use('/api/sessions', executionRouter);
-app.use('/api/cp', cpRouter);
-app.use('/api/repos', reposRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/lean', leanRouter);
+app.use('/api/sessions', claudeRouter);
+app.use('/api/scribe', scribeProxyRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {

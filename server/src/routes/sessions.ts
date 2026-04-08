@@ -3,7 +3,6 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
-import { parseProblemUrl, downloadTestCases } from '../services/oj.js';
 import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
 
@@ -81,22 +80,6 @@ router.get('/:id', (req: Request, res: Response) => {
 
     const result: Record<string, unknown> = { ...formatSession(session), files, runs };
 
-    if (session.session_type === 'cp') {
-      const problem = db.prepare('SELECT * FROM cp_problems WHERE session_id = ?').get(req.params.id) as Record<string, unknown> | undefined;
-      if (problem) {
-        result.problem = { ...problem, topics: parseJsonField(problem.topics as string) };
-        const testCases = db.prepare('SELECT * FROM test_cases WHERE problem_id = ? ORDER BY is_sample DESC, created_at ASC').all(problem.id as string);
-        result.test_cases = testCases;
-      }
-    }
-
-    if (session.session_type === 'repo') {
-      const repo = db.prepare('SELECT * FROM repo_explorations WHERE session_id = ?').get(req.params.id) as Record<string, unknown> | undefined;
-      if (repo) {
-        result.repo = { ...repo, interesting_files: parseJsonField(repo.interesting_files as string) };
-      }
-    }
-
     if (session.session_type === 'lean') {
       const leanMeta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(req.params.id);
       if (leanMeta) {
@@ -114,7 +97,7 @@ router.get('/:id', (req: Request, res: Response) => {
 // POST /api/sessions
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, session_type = 'freeform', language = 'python', tags = [], links = [], problem_url, repo_url } = req.body;
+    const { title, session_type = 'freeform', language = 'python', tags = [], links = [] } = req.body;
 
     if (!title) {
       res.status(400).json({ error: 'Title is required' });
@@ -139,7 +122,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Create default file based on language
     const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : 'py';
-    const defaultFilename = session_type === 'cp' ? `solution.${ext}` : isLean ? 'Main.lean' : `main.${ext}`;
+    const defaultFilename = isLean ? 'Main.lean' : `main.${ext}`;
     const fileId = uuidv4();
 
     db.prepare(`
@@ -164,48 +147,6 @@ router.post('/', async (req: Request, res: Response) => {
       leanProject.scaffoldProject(id).catch((err) => {
         console.error(`Failed to scaffold lean project for session ${id}:`, err);
       });
-    }
-
-    // Handle CP session
-    if (session_type === 'cp' && problem_url) {
-      const parsed = parseProblemUrl(problem_url);
-      const problemId = uuidv4();
-
-      db.prepare(`
-        INSERT INTO cp_problems (id, session_id, judge, problem_url, problem_id, problem_name, topics, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, '', '[]', ?, ?)
-      `).run(problemId, id, parsed.judge, problem_url, parsed.problem_id, now, now);
-
-      // Try to download test cases in background
-      downloadTestCases(problem_url, absWorkingDir).then(testCases => {
-        for (const tc of testCases) {
-          const tcId = uuidv4();
-          const tcNow = getCstTimestamp();
-          db.prepare(`
-            INSERT INTO test_cases (id, problem_id, input, expected_output, is_sample, created_at)
-            VALUES (?, ?, ?, ?, 1, ?)
-          `).run(tcId, problemId, tc.input, tc.expected_output, tcNow);
-        }
-      }).catch(() => { /* oj not available or failed */ });
-    }
-
-    // Handle Repo session
-    if (session_type === 'repo' && repo_url) {
-      const repoName = repo_url.replace(/\.git$/, '').split('/').slice(-2).join('/');
-      const repoId = uuidv4();
-      const clonePath = path.join('data', 'repos', repoName.replace('/', '_'));
-
-      db.prepare(`
-        INSERT INTO repo_explorations (id, session_id, repo_url, repo_name, clone_path, branch, readme_summary, interesting_files, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'main', '', '[]', ?, ?)
-      `).run(repoId, id, repo_url, repoName, clonePath, now, now);
-
-      // Clone in background
-      const { exec } = require('child_process');
-      const absClonePath = path.join(__dirname, '..', '..', clonePath);
-      if (!fs.existsSync(absClonePath)) {
-        exec(`git clone --depth 1 "${repo_url}" "${absClonePath}"`, { timeout: 60000 }, () => {});
-      }
     }
 
     const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown>;

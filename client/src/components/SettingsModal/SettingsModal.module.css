@@ -1,0 +1,138 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.closeBtn {
+  font-size: var(--font-size-xl);
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-1);
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  color: var(--color-text);
+}
+
+.body {
+  padding: var(--space-4);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.keyStatus {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.keySet {
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.keyNotSet {
+  color: var(--color-text-tertiary);
+}
+
+.keyRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.keyInput {
+  flex: 1;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  outline: none;
+}
+
+.keyInput:focus {
+  border-color: var(--color-primary);
+}
+
+.saveBtn {
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.testBtn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface);
+  align-self: flex-start;
+}
+
+.testBtn:hover:not(:disabled) {
+  background-color: var(--color-bg-tertiary);
+}
+
+.testBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.testSuccess {
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+.testError {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}

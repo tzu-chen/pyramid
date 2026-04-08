@@ -9,8 +9,6 @@ function NewSessionPage() {
   const [sessionType, setSessionType] = useState<SessionType>('freeform');
   const [title, setTitle] = useState('');
   const [language, setLanguage] = useState('python');
-  const [problemUrl, setProblemUrl] = useState('');
-  const [repoUrl, setRepoUrl] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
@@ -28,8 +26,6 @@ function NewSessionPage() {
         title: title.trim(),
         session_type: sessionType,
         language,
-        problem_url: sessionType === 'cp' ? problemUrl : undefined,
-        repo_url: sessionType === 'repo' ? repoUrl : undefined,
       });
       navigate(`/sessions/${session.id}`);
     } catch (err) {
@@ -40,8 +36,6 @@ function NewSessionPage() {
 
   const typeOptions: { value: SessionType; label: string; description: string }[] = [
     { value: 'freeform', label: 'Freeform', description: 'Open-ended computation and experimentation' },
-    { value: 'cp', label: 'CP', description: 'Competitive programming practice' },
-    { value: 'repo', label: 'Repo', description: 'GitHub repository exploration' },
     { value: 'lean', label: 'Lean', description: 'Formal proof writing in Lean 4' },
   ];
 
@@ -78,8 +72,6 @@ function NewSessionPage() {
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder={
-              sessionType === 'cp' ? 'e.g., Codeforces 1900A' :
-              sessionType === 'repo' ? 'e.g., Explore: pytorch' :
               sessionType === 'lean' ? 'e.g., Hahn-Banach Theorem' :
               'e.g., SPDE finite element simulation'
             }
@@ -94,32 +86,6 @@ function NewSessionPage() {
               <option value="cpp">C++</option>
               <option value="julia">Julia</option>
             </select>
-          </div>
-        )}
-
-        {sessionType === 'cp' && (
-          <div className={styles.field}>
-            <label className={styles.label}>Problem URL (optional)</label>
-            <input
-              className={styles.input}
-              type="url"
-              value={problemUrl}
-              onChange={e => setProblemUrl(e.target.value)}
-              placeholder="https://codeforces.com/contest/1900/problem/A"
-            />
-          </div>
-        )}
-
-        {sessionType === 'repo' && (
-          <div className={styles.field}>
-            <label className={styles.label}>GitHub URL</label>
-            <input
-              className={styles.input}
-              type="url"
-              value={repoUrl}
-              onChange={e => setRepoUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo"
-            />
           </div>
         )}
 

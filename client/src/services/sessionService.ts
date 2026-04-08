@@ -29,8 +29,6 @@ export const sessionService = {
     language: string;
     tags?: string[];
     links?: unknown[];
-    problem_url?: string;
-    repo_url?: string;
   }): Promise<Session> {
     return api.post<Session>('/sessions', data);
   },

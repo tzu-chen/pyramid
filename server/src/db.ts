@@ -7,7 +7,6 @@ const DB_PATH = path.join(DATA_DIR, 'pyramid.db');
 
 // Ensure data directories exist
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
-fs.mkdirSync(path.join(DATA_DIR, 'repos'), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'lean-projects'), { recursive: true });
 
 const db: DatabaseType = new Database(DB_PATH);
@@ -22,7 +21,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     session_type TEXT NOT NULL DEFAULT 'freeform'
-      CHECK (session_type IN ('freeform', 'cp', 'repo', 'lean')),
+      CHECK (session_type IN ('freeform', 'lean')),
     language TEXT NOT NULL DEFAULT 'python',
     tags TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'active'
@@ -61,49 +60,6 @@ db.exec(`
     FOREIGN KEY (file_id) REFERENCES session_files(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE IF NOT EXISTS cp_problems (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL UNIQUE,
-    judge TEXT NOT NULL,
-    problem_url TEXT NOT NULL,
-    problem_id TEXT NOT NULL,
-    problem_name TEXT NOT NULL DEFAULT '',
-    difficulty TEXT,
-    topics TEXT NOT NULL DEFAULT '[]',
-    verdict TEXT NOT NULL DEFAULT 'unsolved'
-      CHECK (verdict IN ('unsolved', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'attempted')),
-    attempts INTEGER NOT NULL DEFAULT 0,
-    solved_at TEXT,
-    editorial_notes TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS test_cases (
-    id TEXT PRIMARY KEY,
-    problem_id TEXT NOT NULL,
-    input TEXT NOT NULL,
-    expected_output TEXT NOT NULL,
-    is_sample INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (problem_id) REFERENCES cp_problems(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS repo_explorations (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL UNIQUE,
-    repo_url TEXT NOT NULL,
-    repo_name TEXT NOT NULL,
-    clone_path TEXT NOT NULL,
-    branch TEXT NOT NULL DEFAULT 'main',
-    readme_summary TEXT NOT NULL DEFAULT '',
-    interesting_files TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  );
-
   CREATE TABLE IF NOT EXISTS lean_session_meta (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL UNIQUE,
@@ -133,11 +89,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_session_files_session ON session_files(session_id);
   CREATE INDEX IF NOT EXISTS idx_runs_session ON execution_runs(session_id);
   CREATE INDEX IF NOT EXISTS idx_runs_created ON execution_runs(created_at);
-  CREATE INDEX IF NOT EXISTS idx_cp_session ON cp_problems(session_id);
-  CREATE INDEX IF NOT EXISTS idx_cp_judge ON cp_problems(judge);
-  CREATE INDEX IF NOT EXISTS idx_cp_verdict ON cp_problems(verdict);
-  CREATE INDEX IF NOT EXISTS idx_test_cases_problem ON test_cases(problem_id);
-  CREATE INDEX IF NOT EXISTS idx_repo_session ON repo_explorations(session_id);
   CREATE INDEX IF NOT EXISTS idx_lean_meta_session ON lean_session_meta(session_id);
 `);
 

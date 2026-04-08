@@ -36,14 +36,6 @@ function DashboardPage() {
           <div className={styles.statValue}>{overview?.total_runs ?? 0}</div>
           <div className={styles.statLabel}>Total Runs</div>
         </div>
-        <div className={styles.statCard}>
-          <div className={styles.statValue}>{overview?.cp_solved ?? 0}/{overview?.cp_total ?? 0}</div>
-          <div className={styles.statLabel}>CP Solved</div>
-        </div>
-        <div className={styles.statCard}>
-          <div className={styles.statValue}>{overview ? `${Math.round(overview.cp_solve_rate * 100)}%` : '0%'}</div>
-          <div className={styles.statLabel}>CP Solve Rate</div>
-        </div>
       </div>
 
       {overview && overview.sessions_by_type.length > 0 && (
@@ -52,7 +44,7 @@ function DashboardPage() {
           <div className={styles.typeGrid}>
             {overview.sessions_by_type.map(s => (
               <div key={s.session_type} className={styles.typeCard}>
-                <Badge label={s.session_type} variant={s.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
+                <Badge label={s.session_type} variant={s.session_type as 'freeform' | 'lean'} />
                 <span className={styles.typeCount}>{s.count}</span>
               </div>
             ))}
@@ -74,7 +66,7 @@ function DashboardPage() {
                 <div className={styles.sessionInfo}>
                   <span className={styles.sessionTitle}>{session.title}</span>
                   <div className={styles.sessionMeta}>
-                    <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
+                    <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean'} />
                     <Badge label={session.language} />
                   </div>
                 </div>

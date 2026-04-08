@@ -63,7 +63,7 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
     const absWorkingDir = path.join(__dirname, '..', '..', session.working_dir as string);
     const language = (file.language as string) || (session.language as string);
 
-    const defaultTimeout = session.session_type === 'cp' ? 10000 : 30000;
+    const defaultTimeout = 30000;
     const result = await executeFile(absWorkingDir, file.filename as string, language, {
       timeout_ms: timeout_ms || defaultTimeout,
       stdin,

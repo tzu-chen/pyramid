@@ -6,22 +6,21 @@ import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
-import { cpService } from '../../services/cpService';
-import { repoService } from '../../services/repoService';
 import { leanService } from '../../services/leanService';
+import { scribeService, type ScribeNode } from '../../services/claudeService';
 import CodeEditor from '../../components/CodeEditor/CodeEditor';
-import FileTree from '../../components/FileTree/FileTree';
+import ClaudePanel from '../../components/ClaudePanel/ClaudePanel';
 import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer';
 import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { ExecutionRun, SessionFile, TestResult, LakeStatus } from '../../types';
+import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'notes' | 'tests' | 'problem' | 'repo';
-type LeanTab = 'goalState' | 'messages' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'claude' | 'notes' | 'links';
+type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -34,11 +33,15 @@ function SessionPage() {
   const [notesEditing, setNotesEditing] = useState(false);
   const [runs, setRuns] = useState<ExecutionRun[]>([]);
   const [executing, setExecuting] = useState(false);
-  const [testResults, setTestResults] = useState<TestResult[] | null>(null);
-  const [runningTests, setRunningTests] = useState(false);
-  const [repoFilePath, setRepoFilePath] = useState<string | null>(null);
-  const [repoFileContent, setRepoFileContent] = useState('');
-  const [repoFileLoading, setRepoFileLoading] = useState(false);
+  const [autoErrorMode, setAutoErrorMode] = useState(false);
+  const claudePromptFocusRef = useRef<(() => void) | null>(null);
+
+  // Link management state
+  const [linkAddMode, setLinkAddMode] = useState<'scribe' | 'navigate' | 'granary' | 'monolith' | null>(null);
+  const [linkScribeSearch, setLinkScribeSearch] = useState('');
+  const [linkScribeResults, setLinkScribeResults] = useState<ScribeNode[]>([]);
+  const [linkScribeSearching, setLinkScribeSearching] = useState(false);
+  const [linkInputValue, setLinkInputValue] = useState('');
 
   // Editor font size and symbol insertion
   const { fontSize } = useEditorFontSize();
@@ -204,33 +207,75 @@ function SessionPage() {
     }
   };
 
-  const handleRunTests = async () => {
-    if (!session?.problem || runningTests) return;
-    setRunningTests(true);
+  const handleAskClaude = () => {
+    setAutoErrorMode(true);
+    setActiveTab('claude');
+    setTimeout(() => claudePromptFocusRef.current?.(), 100);
+  };
+
+  const handleApplyCode = useCallback((code: string) => {
+    if (id && activeFileId) {
+      setFileContent(code);
+      fileService.updateContent(id, activeFileId, code).catch(() => {});
+      if (isLean && fileUriRef.current) {
+        lspRef.current.sendDidChange(fileUriRef.current, code);
+      }
+    }
+  }, [id, activeFileId, isLean]);
+
+  const updateLinks = async (newLinks: SessionLink[]) => {
+    if (!id || !session) return;
     try {
-      const result = await cpService.runTests(session.problem.id);
-      setTestResults(result.results);
-      setActiveTab('tests');
-    } catch (err) {
-      console.error(err);
+      await sessionService.update(id, { links: newLinks });
+      refresh();
+    } catch { /* */ }
+  };
+
+  const handleScribeLinkSearch = async () => {
+    if (!linkScribeSearch.trim()) return;
+    setLinkScribeSearching(true);
+    try {
+      const results = await scribeService.searchNodes(linkScribeSearch);
+      setLinkScribeResults(results);
+    } catch {
+      setLinkScribeResults([]);
     } finally {
-      setRunningTests(false);
+      setLinkScribeSearching(false);
     }
   };
 
-  const handleRepoFileSelect = useCallback(async (path: string) => {
-    if (!session?.repo) return;
-    setRepoFilePath(path);
-    setRepoFileLoading(true);
-    try {
-      const content = await repoService.readFile(session.repo.id, path);
-      setRepoFileContent(content);
-    } catch {
-      setRepoFileContent('Failed to load file.');
-    } finally {
-      setRepoFileLoading(false);
-    }
-  }, [session?.repo]);
+  const handleAddScribeLink = (node: ScribeNode) => {
+    if (!session) return;
+    const newLink: SessionLink = {
+      app: 'scribe',
+      ref_type: 'flowchart_node',
+      ref_id: node.node_key,
+      label: node.title,
+    };
+    updateLinks([...session.links, newLink]);
+    setLinkAddMode(null);
+    setLinkScribeSearch('');
+    setLinkScribeResults([]);
+  };
+
+  const handleAddTextLink = () => {
+    if (!session || !linkAddMode || linkAddMode === 'scribe' || !linkInputValue.trim()) return;
+    const appRefMap: Record<string, { app: LinkApp; ref_type: RefType }> = {
+      navigate: { app: 'navigate', ref_type: 'arxiv_id' },
+      granary: { app: 'granary', ref_type: 'entry_id' },
+      monolith: { app: 'monolith', ref_type: 'project' },
+    };
+    const { app, ref_type } = appRefMap[linkAddMode];
+    const newLink: SessionLink = { app, ref_type, ref_id: linkInputValue.trim() };
+    updateLinks([...session.links, newLink]);
+    setLinkAddMode(null);
+    setLinkInputValue('');
+  };
+
+  const handleRemoveLink = (index: number) => {
+    if (!session) return;
+    updateLinks(session.links.filter((_, i) => i !== index));
+  };
 
   const handleStatusChange = async (status: string) => {
     if (!id) return;
@@ -255,7 +300,7 @@ function SessionPage() {
       <div className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
           <h2 className={styles.sessionTitle}>{session.title}</h2>
-          <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'cp' | 'repo' | 'lean'} />
+          <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean'} />
           <Badge label={session.language} />
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />
@@ -273,19 +318,22 @@ function SessionPage() {
             <option value="archived">Archived</option>
           </select>
           {isLean ? (
-            <button className={styles.buildButton} onClick={handleBuild} disabled={building || lakeStatus === 'initializing'}>
-              {building ? 'Building...' : 'Build'}
-            </button>
+            <>
+              <button className={styles.buildButton} onClick={handleBuild} disabled={building || lakeStatus === 'initializing'}>
+                {building ? 'Building...' : 'Build'}
+              </button>
+              {lsp.diagnostics.some(d => d.severity === 1) && (
+                <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
+              )}
+            </>
           ) : (
             <>
-              {session.session_type === 'cp' && session.problem && (
-                <button className={styles.runTestsButton} onClick={handleRunTests} disabled={runningTests}>
-                  {runningTests ? 'Testing...' : 'Run Tests'}
-                </button>
-              )}
               <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
                 {executing ? 'Running...' : 'Run'}
               </button>
+              {latestRun && (latestRun.exit_code !== 0 || latestRun.stderr) && (
+                <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
+              )}
             </>
           )}
         </div>
@@ -344,6 +392,12 @@ function SessionPage() {
                   Messages
                 </button>
                 <button
+                  className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('claude')}
+                >
+                  Claude
+                </button>
+                <button
                   className={`${styles.tab} ${activeTab === 'notes' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('notes')}
                 >
@@ -365,35 +419,23 @@ function SessionPage() {
                   Output
                 </button>
                 <button
+                  className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('claude')}
+                >
+                  Claude
+                </button>
+                <button
                   className={`${styles.tab} ${activeTab === 'notes' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('notes')}
                 >
                   Notes
                 </button>
-                {session.session_type === 'cp' && (
-                  <>
-                    <button
-                      className={`${styles.tab} ${activeTab === 'tests' ? styles.tabActive : ''}`}
-                      onClick={() => setActiveTab('tests')}
-                    >
-                      Tests
-                    </button>
-                    <button
-                      className={`${styles.tab} ${activeTab === 'problem' ? styles.tabActive : ''}`}
-                      onClick={() => setActiveTab('problem')}
-                    >
-                      Problem
-                    </button>
-                  </>
-                )}
-                {session.session_type === 'repo' && (
-                  <button
-                    className={`${styles.tab} ${activeTab === 'repo' ? styles.tabActive : ''}`}
-                    onClick={() => setActiveTab('repo')}
-                  >
-                    Repo
-                  </button>
-                )}
+                <button
+                  className={`${styles.tab} ${activeTab === 'links' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('links')}
+                >
+                  Links
+                </button>
               </>
             )}
           </div>
@@ -429,20 +471,102 @@ function SessionPage() {
               </div>
             )}
 
-            {/* Lean: Links */}
-            {activeTab === 'links' && isLean && (
+            {/* Links */}
+            {activeTab === 'links' && (
               <div className={styles.linksPane}>
-                {session.links && session.links.length > 0 ? (
+                {session.links && session.links.length > 0 && (
                   <div className={styles.linksList}>
                     {session.links.map((link, i) => (
                       <div key={i} className={styles.linkItem}>
                         <Badge label={link.app} />
-                        <span className={styles.linkRef}>{link.ref_type}: {link.ref_id}</span>
-                        {link.label && <span className={styles.linkLabel}>{link.label}</span>}
+                        <span className={styles.linkRef}>
+                          {link.label || link.ref_id}
+                        </span>
+                        {link.label && (
+                          <span className={styles.linkMeta}>{link.ref_type}: {link.ref_id}</span>
+                        )}
+                        <button
+                          className={styles.linkRemoveBtn}
+                          onClick={() => handleRemoveLink(i)}
+                          title="Remove link"
+                        >
+                          &times;
+                        </button>
                       </div>
                     ))}
                   </div>
-                ) : (
+                )}
+
+                <div className={styles.addLinkRow}>
+                  {!linkAddMode ? (
+                    <div className={styles.addLinkButtons}>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('scribe')}>+ Scribe</button>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('navigate')}>+ Navigate</button>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('granary')}>+ Granary</button>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('monolith')}>+ Monolith</button>
+                    </div>
+                  ) : linkAddMode === 'scribe' ? (
+                    <div className={styles.linkForm}>
+                      <div className={styles.linkFormHeader}>
+                        <span>Link to Scribe node</span>
+                        <button className={styles.linkFormCancel} onClick={() => { setLinkAddMode(null); setLinkScribeSearch(''); setLinkScribeResults([]); }}>&times;</button>
+                      </div>
+                      <div className={styles.linkFormRow}>
+                        <input
+                          className={styles.linkFormInput}
+                          type="text"
+                          value={linkScribeSearch}
+                          onChange={e => setLinkScribeSearch(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleScribeLinkSearch()}
+                          placeholder="Search Scribe nodes by title..."
+                          autoFocus
+                        />
+                        <button className={styles.linkFormBtn} onClick={handleScribeLinkSearch} disabled={linkScribeSearching}>
+                          {linkScribeSearching ? '...' : 'Search'}
+                        </button>
+                      </div>
+                      {linkScribeResults.length > 0 && (
+                        <div className={styles.linkScribeResults}>
+                          {linkScribeResults.map(node => (
+                            <button
+                              key={node.node_key}
+                              className={styles.linkScribeResultItem}
+                              onClick={() => handleAddScribeLink(node)}
+                            >
+                              <span className={styles.linkScribeTitle}>{node.title}</span>
+                              {node.flowchart_name && (
+                                <span className={styles.linkScribeFlowchart}>{node.flowchart_name}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className={styles.linkForm}>
+                      <div className={styles.linkFormHeader}>
+                        <span>Link to {linkAddMode.charAt(0).toUpperCase() + linkAddMode.slice(1)} {linkAddMode === 'navigate' ? '(arXiv ID)' : linkAddMode === 'granary' ? '(entry ID)' : '(project name)'}</span>
+                        <button className={styles.linkFormCancel} onClick={() => { setLinkAddMode(null); setLinkInputValue(''); }}>&times;</button>
+                      </div>
+                      <div className={styles.linkFormRow}>
+                        <input
+                          className={styles.linkFormInput}
+                          type="text"
+                          value={linkInputValue}
+                          onChange={e => setLinkInputValue(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleAddTextLink()}
+                          placeholder={linkAddMode === 'navigate' ? '2301.12345' : linkAddMode === 'granary' ? 'Entry ID...' : 'Project name...'}
+                          autoFocus
+                        />
+                        <button className={styles.linkFormBtn} onClick={handleAddTextLink} disabled={!linkInputValue.trim()}>
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {(!session.links || session.links.length === 0) && !linkAddMode && (
                   <div className={styles.placeholder}>No cross-app links</div>
                 )}
               </div>
@@ -486,6 +610,23 @@ function SessionPage() {
               </div>
             )}
 
+            {/* Claude */}
+            {activeTab === 'claude' && (
+              <ClaudePanel
+                sessionId={id!}
+                sessionType={session.session_type as 'lean' | 'freeform'}
+                fileContent={fileContent}
+                fileName={session.files.find(f => f.id === activeFileId)?.filename || ''}
+                diagnostics={isLean ? lsp.diagnostics : undefined}
+                goalState={isLean ? lsp.goalState : undefined}
+                lastRun={!isLean ? latestRun : undefined}
+                links={session.links}
+                onApplyCode={handleApplyCode}
+                autoErrorMode={autoErrorMode}
+                promptFocusRef={claudePromptFocusRef}
+              />
+            )}
+
             {/* Shared: Notes */}
             {activeTab === 'notes' && (
               <div className={styles.notesPane}>
@@ -510,134 +651,6 @@ function SessionPage() {
               </div>
             )}
 
-            {/* CP: Tests */}
-            {activeTab === 'tests' && session.session_type === 'cp' && (
-              <div className={styles.testsPane}>
-                {testResults ? (
-                  <div className={styles.testResults}>
-                    {testResults.map((tr, i) => (
-                      <div key={tr.test_case_id} className={`${styles.testResult} ${tr.passed ? styles.testPassed : styles.testFailed}`}>
-                        <div className={styles.testHeader}>
-                          <span>Test #{i + 1}</span>
-                          <Badge label={tr.passed ? 'PASS' : 'FAIL'} variant={tr.passed ? 'success' : 'danger'} />
-                          <span className={styles.testTime}>{tr.duration_ms}ms</span>
-                        </div>
-                        <div className={styles.testDetails}>
-                          <div className={styles.testBlock}>
-                            <label>Input</label>
-                            <pre>{tr.input}</pre>
-                          </div>
-                          <div className={styles.testBlock}>
-                            <label>Expected</label>
-                            <pre>{tr.expected_output}</pre>
-                          </div>
-                          <div className={styles.testBlock}>
-                            <label>Actual</label>
-                            <pre>{tr.actual_output}</pre>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : session.test_cases && session.test_cases.length > 0 ? (
-                  <div className={styles.testCaseList}>
-                    {session.test_cases.map((tc, i) => (
-                      <div key={tc.id} className={styles.testCase}>
-                        <div className={styles.testCaseHeader}>Test #{i + 1} {tc.is_sample ? '(sample)' : '(custom)'}</div>
-                        <div className={styles.testDetails}>
-                          <div className={styles.testBlock}><label>Input</label><pre>{tc.input}</pre></div>
-                          <div className={styles.testBlock}><label>Expected</label><pre>{tc.expected_output}</pre></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className={styles.placeholder}>No test cases. Run Tests to fetch them.</div>
-                )}
-              </div>
-            )}
-
-            {/* CP: Problem */}
-            {activeTab === 'problem' && session.problem && (
-              <div className={styles.problemPane}>
-                <div className={styles.problemInfo}>
-                  <div className={styles.problemField}>
-                    <label>Judge</label>
-                    <span>{session.problem.judge}</span>
-                  </div>
-                  <div className={styles.problemField}>
-                    <label>Problem ID</label>
-                    <span>{session.problem.problem_id}</span>
-                  </div>
-                  {session.problem.problem_url && (
-                    <div className={styles.problemField}>
-                      <label>URL</label>
-                      <a href={session.problem.problem_url} target="_blank" rel="noopener noreferrer">
-                        Open in browser
-                      </a>
-                    </div>
-                  )}
-                  <div className={styles.problemField}>
-                    <label>Verdict</label>
-                    <Badge
-                      label={session.problem.verdict}
-                      variant={session.problem.verdict === 'accepted' ? 'success' : session.problem.verdict === 'unsolved' ? 'default' : 'danger'}
-                    />
-                  </div>
-                  <div className={styles.problemField}>
-                    <label>Attempts</label>
-                    <span>{session.problem.attempts}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Repo */}
-            {activeTab === 'repo' && session.session_type === 'repo' && (
-              <div className={styles.repoPane}>
-                {session.repo ? (
-                  <>
-                    <div className={styles.repoMeta}>
-                      <div className={styles.repoField}>
-                        <label>Repository</label>
-                        <span>{session.repo.repo_name}</span>
-                      </div>
-                      <div className={styles.repoField}>
-                        <label>Branch</label>
-                        <span>{session.repo.branch}</span>
-                      </div>
-                      <div className={styles.repoField}>
-                        <label>URL</label>
-                        <a href={session.repo.repo_url} target="_blank" rel="noopener noreferrer">
-                          {session.repo.repo_url}
-                        </a>
-                      </div>
-                    </div>
-                    <div className={styles.repoBrowser}>
-                      <div className={styles.repoTree}>
-                        <FileTree repoId={session.repo.id} onFileSelect={handleRepoFileSelect} />
-                      </div>
-                      <div className={styles.repoFileViewer}>
-                        {repoFileLoading ? (
-                          <div className={styles.placeholder}>Loading...</div>
-                        ) : repoFilePath ? (
-                          <>
-                            <div className={styles.repoFileName}>{repoFilePath}</div>
-                            <pre className={styles.repoFileContent}>{repoFileContent}</pre>
-                          </>
-                        ) : (
-                          <div className={styles.placeholder}>Select a file to view its contents</div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className={styles.placeholder}>
-                    Repository is being cloned. Refresh the page in a moment.
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>

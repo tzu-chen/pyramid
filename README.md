@@ -1,6 +1,6 @@
 # Pyramid
 
-A computational workbench for interactive **Lean 4 proof development** with full LSP integration, accessible from any device — including iPad — via the browser. Also supports numerical/scientific computation (Python/Julia), competitive programming practice (C++/Python via online judges), and GitHub repository exploration.
+A computational workbench for interactive **Lean 4 proof development** with full LSP integration and **freeform numerical/scientific computation** (Python/Julia/C++), accessible from any device — including iPad — via the browser. Includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance.
 
 ## Features
 
@@ -19,17 +19,14 @@ A computational workbench for interactive **Lean 4 proof development** with full
 - Execution history with timing and exit codes
 - Session-isolated working directories
 
-### Competitive Programming
+### Claude AI Integration
 
-- Integration with [online-judge-tools](https://github.com/online-judge-tools/oj) for Codeforces, AtCoder, and LeetCode
-- Automatic test case download and local testing
-- Verdict and progress tracking by judge, topic, and difficulty
-
-### GitHub Repository Exploration
-
-- Clone and browse repositories with a file tree viewer
-- Editable scratch files alongside read-only repo source
-- README summary and interesting file annotations
+- **Error diagnosis** — auto-assembles diagnostics/runtime errors as context for Claude
+- **Formalization help** (Lean) — translates informal math into Lean 4 proofs with Scribe context
+- **Implementation help** (freeform) — assists with algorithm and method implementation
+- **Context auto-assembly** — current file, diagnostics, goal state, and linked Scribe nodes
+- **Apply to editor** — one-click insertion of Claude's suggested code
+- API key management via Settings modal
 
 ### General
 
@@ -58,11 +55,10 @@ For Lean sessions:
 - **Lean 4** via [elan](https://github.com/leanprover/elan) toolchain manager
 - **Lake** (bundled with Lean)
 
-For freeform/CP sessions (optional, based on language):
+For freeform sessions (optional, based on language):
 - **Python 3**
 - **Julia**
 - **g++** (with C++17 support)
-- **[online-judge-tools](https://github.com/online-judge-tools/oj)** (`pip install online-judge-tools`) — for competitive programming
 
 ## Getting Started
 
@@ -105,7 +101,7 @@ pyramid/
 │   ├── src/
 │   │   ├── App.tsx             # Routing and global state
 │   │   ├── types.ts            # Shared TypeScript interfaces
-│   │   ├── components/         # Reusable UI (CodeEditor, GoalStatePanel, FileTree, ...)
+│   │   ├── components/         # Reusable UI (CodeEditor, GoalStatePanel, ClaudePanel, ...)
 │   │   ├── pages/              # Route-level pages (Dashboard, SessionList, SessionPage, ...)
 │   │   ├── services/           # API client layer (REST + WebSocket)
 │   │   ├── hooks/              # Custom React hooks (useLeanLsp, useSession, ...)
@@ -120,12 +116,12 @@ pyramid/
     │       ├── execution.ts    # Child process spawning (Python/Julia/C++)
     │       ├── lean-lsp.ts     # Lean LSP server lifecycle + WebSocket relay
     │       ├── lean-project.ts # Lake project scaffolding and Mathlib cache
-    │       └── oj.ts           # online-judge-tools wrapper
+    │       ├── claude.ts       # Claude API client
+    │       └── scribe.ts       # Scribe cross-app proxy
     └── data/                   # Runtime data (gitignored)
         ├── pyramid.db          # SQLite database
         ├── sessions/           # Session working directories
-        ├── lean-projects/      # Lake projects (one per Lean session)
-        └── repos/              # Cloned GitHub repositories
+        └── lean-projects/      # Lake projects (one per Lean session)
 ```
 
 ## How Lean Integration Works
@@ -150,10 +146,10 @@ All endpoints are under the `/api` prefix.
 | Files | `GET/POST/PUT/DELETE /api/sessions/:id/files` | File metadata and content read/write |
 | Execution | `POST /api/sessions/:id/execute` | Run code (Python/Julia/C++), get stdout/stderr |
 | Lean | `POST /api/lean/:id/build`, `WS /ws/lean/:id` | Lake build trigger, LSP WebSocket relay |
-| CP | `/api/cp/problems`, `/api/cp/problems/:id/test` | Problem CRUD, local test runner |
-| Repos | `/api/repos`, `/api/repos/:id/tree` | Repo metadata, file tree browsing |
+| Claude | `POST /api/sessions/:id/claude/ask` | AI-assisted error diagnosis, formalization, implementation |
+| Scribe Proxy | `GET /api/scribe/*` | Cross-app context from Scribe flowcharts |
 | Stats | `/api/stats/overview`, `/api/stats/heatmap` | Activity and progress analytics |
-| Settings | `GET/PUT /api/settings/:key` | User preferences |
+| Settings | `GET/PUT /api/settings/:key` | User preferences (incl. Claude API key) |
 
 ## Environment
 

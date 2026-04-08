@@ -14,14 +14,6 @@ export const statsService = {
     return api.get<HeatmapEntry[]>(`/stats/heatmap${qs ? `?${qs}` : ''}`);
   },
 
-  async getCpStats(): Promise<{
-    by_verdict: { verdict: string; count: number }[];
-    by_judge: { judge: string; count: number }[];
-    solve_rate_over_time: { date: string; count: number }[];
-  }> {
-    return api.get('/stats/cp');
-  },
-
   async getLanguages(): Promise<{ language: string; count: number }[]> {
     return api.get('/stats/languages');
   },

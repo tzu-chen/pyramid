@@ -1,0 +1,309 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Context blocks */
+.contextArea {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.contextBlock {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-2);
+  overflow: hidden;
+}
+
+.contextHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-bg-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.contextLabel {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextActions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.contextBtn {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-1);
+}
+
+.contextBtn:hover {
+  color: var(--color-text);
+}
+
+.contextContent {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: var(--space-2);
+  margin: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 100px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.contextEditor {
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.addContextRow {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.addContextBtn {
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  padding: var(--space-1) 0;
+}
+
+.addContextBtn:hover {
+  text-decoration: underline;
+}
+
+/* Scribe picker */
+.scribePicker {
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.scribeSearchRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.scribeInput {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-surface);
+  color: inherit;
+  outline: none;
+}
+
+.scribeSearchBtn {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+
+.scribeResults {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.scribeResultItem {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.scribeResultItem:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.scribeNodeTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.scribeFlowchart {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* Mode selector */
+.modeRow {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.modeSelector {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.modeBtn {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.modeBtn:last-child {
+  border-right: none;
+}
+
+.modeBtn:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.modeBtnActive {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+/* Prompt */
+.promptArea {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.promptInput {
+  flex: 1;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  resize: vertical;
+  outline: none;
+  line-height: 1.4;
+}
+
+.promptInput:focus {
+  border-color: var(--color-primary);
+}
+
+.sendBtn {
+  padding: var(--space-1) var(--space-3);
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sendBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sendBtn:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+}
+
+/* Error */
+.errorMsg {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+/* Response */
+.responseArea {
+  padding: var(--space-3);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.response {
+  font-size: inherit;
+  line-height: 1.6;
+}
+
+.codeBlockWrapper {
+  position: relative;
+  margin: var(--space-2) 0;
+}
+
+.codeBlock {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.codeActions {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-light);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.codeActionBtn {
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  padding: var(--space-1) var(--space-2);
+}
+
+.codeActionBtn:hover {
+  text-decoration: underline;
+}
+
+/* Token usage */
+.tokenUsage {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-align: right;
+}

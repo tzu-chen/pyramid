@@ -20,16 +20,6 @@
   color: var(--color-freeform);
 }
 
-.cp {
-  background-color: var(--color-warning-light);
-  color: var(--color-cp);
-}
-
-.repo {
-  background-color: var(--color-success-light);
-  color: var(--color-repo);
-}
-
 .lean {
   background-color: #f3d9fa;
   color: var(--color-lean);

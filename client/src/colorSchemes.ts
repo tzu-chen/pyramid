@@ -34,8 +34,7 @@ const defaultLight: ColorScheme = {
     'color-tag-text': '#495057',
     'color-overlay-light': 'rgba(0, 0, 0, 0.1)',
     'color-freeform': '#4263eb',
-    'color-cp': '#e67700',
-    'color-repo': '#2b8a3e',
+
     'color-lean': '#862e9c',
     'shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.05)',
     'shadow-md': '0 2px 8px rgba(0, 0, 0, 0.08)',
@@ -72,8 +71,7 @@ const defaultDark: ColorScheme = {
     'color-tag-text': '#ced4da',
     'color-overlay-light': 'rgba(255, 255, 255, 0.1)',
     'color-freeform': '#5c7cfa',
-    'color-cp': '#fab005',
-    'color-repo': '#40c057',
+
     'color-lean': '#be4bdb',
     'shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.2)',
     'shadow-md': '0 2px 8px rgba(0, 0, 0, 0.3)',
@@ -110,8 +108,7 @@ const solarizedLight: ColorScheme = {
     'color-tag-text': '#586e75',
     'color-overlay-light': 'rgba(0, 0, 0, 0.1)',
     'color-freeform': '#268bd2',
-    'color-cp': '#b58900',
-    'color-repo': '#859900',
+
     'color-lean': '#6c71c4',
     'shadow-sm': '0 1px 3px rgba(0, 0, 0, 0.08)',
     'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.1)',
@@ -148,8 +145,7 @@ const solarizedDark: ColorScheme = {
     'color-tag-text': '#93a1a1',
     'color-overlay-light': 'rgba(255, 255, 255, 0.08)',
     'color-freeform': '#268bd2',
-    'color-cp': '#b58900',
-    'color-repo': '#859900',
+
     'color-lean': '#6c71c4',
     'shadow-sm': '0 1px 3px rgba(0, 0, 0, 0.3)',
     'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.4)',
@@ -186,8 +182,7 @@ const nord: ColorScheme = {
     'color-tag-text': '#d8dee9',
     'color-overlay-light': 'rgba(255, 255, 255, 0.08)',
     'color-freeform': '#88c0d0',
-    'color-cp': '#ebcb8b',
-    'color-repo': '#a3be8c',
+
     'color-lean': '#b48ead',
     'shadow-sm': '0 1px 3px rgba(0, 0, 0, 0.3)',
     'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.4)',
@@ -224,8 +219,7 @@ const dracula: ColorScheme = {
     'color-tag-text': '#f8f8f2',
     'color-overlay-light': 'rgba(255, 255, 255, 0.08)',
     'color-freeform': '#bd93f9',
-    'color-cp': '#f1fa8c',
-    'color-repo': '#50fa7b',
+
     'color-lean': '#ff79c6',
     'shadow-sm': '0 1px 3px rgba(0, 0, 0, 0.3)',
     'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.4)',
@@ -262,8 +256,7 @@ const gruvboxLight: ColorScheme = {
     'color-tag-text': '#504945',
     'color-overlay-light': 'rgba(0, 0, 0, 0.1)',
     'color-freeform': '#458588',
-    'color-cp': '#d79921',
-    'color-repo': '#98971a',
+
     'color-lean': '#b16286',
     'shadow-sm': '0 1px 3px rgba(0, 0, 0, 0.08)',
     'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.1)',
@@ -300,8 +293,7 @@ const catppuccinLatte: ColorScheme = {
     'color-tag-text': '#5c5f77',
     'color-overlay-light': 'rgba(0, 0, 0, 0.08)',
     'color-freeform': '#1e66f5',
-    'color-cp': '#df8e1d',
-    'color-repo': '#40a02b',
+
     'color-lean': '#8839ef',
     'shadow-sm': '0 1px 3px rgba(76, 79, 105, 0.06)',
     'shadow-md': '0 4px 12px rgba(76, 79, 105, 0.1)',

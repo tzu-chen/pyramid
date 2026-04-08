@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Pyramid is a **computational workbench** with a primary focus on **Lean 4 proof development** with full LSP integration, accessible from any device including iPad. It also supports numerical/scientific computation (Python/Julia), competitive programming practice (C++/Python via online judges), and GitHub repo exploration. Sessions are the core abstraction — each session bundles code, outputs, notes, and provenance links into a logged, searchable unit.
+Pyramid is a **computational workbench** for **Lean 4 proof development** with full LSP integration and **freeform numerical/scientific computation** (Python/Julia/C++), accessible from any device including iPad. It includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance. Sessions are the core abstraction — each session bundles code, outputs, notes, and provenance links into a logged, searchable unit.
 
 The Lean experience is Pyramid's most distinctive feature: it provides an interactive proof development environment (editor + tactic goal state + diagnostics) served as a web app, enabling Lean work from any browser — including iPad — over the local network. No other tool provides this.
 
@@ -67,13 +67,13 @@ pyramid/
     │       ├── execution.ts  # Child process spawning for Python/Julia/C++
     │       ├── lean-lsp.ts   # Lean LSP server lifecycle management
     │       ├── lean-project.ts # Lake project scaffolding and build
-    │       ├── oj.ts         # online-judge-tools wrapper for CP
-    │       └── database.ts   # SQLite query functions
+    │       ├── claude.ts     # Claude API client (Anthropic Messages API)
+    │       ├── claude-prompts.ts # System prompts for Claude modes
+    │       └── scribe.ts     # Scribe cross-app proxy client
     └── data/                 # Runtime data (gitignored)
         ├── pyramid.db        # SQLite database
         ├── sessions/         # Session working directories (code files, outputs)
-        ├── lean-projects/    # Lake projects (one per Lean session, with Mathlib cache)
-        └── repos/            # Cloned GitHub repos for repo-exploration sessions
+        └── lean-projects/    # Lake projects (one per Lean session, with Mathlib cache)
 ```
 
 ---
@@ -215,14 +215,6 @@ Open-ended numerical/scientific experimentation. The user writes code, runs it, 
 
 Execution model: spawn a child process (`python3`, `julia`, or `g++ && ./a.out`), capture stdout/stderr, log the run. Simple spawn-and-exit, no long-lived process.
 
-### CP (Competitive Programming)
-
-Linked to a problem URL on Codeforces/AtCoder/LeetCode. Uses `online-judge-tools` (`oj`) for downloading test cases, local testing, and submission. Same spawn-and-exit execution model as freeform.
-
-### Repo (GitHub Exploration)
-
-Clones a GitHub repo, provides browsable source alongside a scratch area for the user's own code. Read-only repo file tree + editable scratch files.
-
 ---
 
 ## Core Concepts
@@ -235,8 +227,8 @@ The fundamental data unit. A session is a timestamped workspace for a specific a
 interface Session {
   id: string;                          // UUID
   title: string;                       // User-provided or auto-generated
-  session_type: 'lean' | 'freeform' | 'cp' | 'repo';
-  language: string;                    // 'lean' | 'python' | 'julia' | 'cpp' | 'mixed'
+  session_type: 'lean' | 'freeform';
+  language: string;                    // 'lean' | 'python' | 'julia' | 'cpp'
   tags: string[];                      // JSON array stored as TEXT
   status: 'active' | 'paused' | 'completed' | 'archived';
   links: SessionLink[];                // Cross-app references (see below)
@@ -264,7 +256,7 @@ interface SessionFile {
 
 File content is stored on the filesystem, not in SQLite. The `session_files` table stores metadata only.
 
-### Execution Runs (freeform/CP only)
+### Execution Runs (freeform only)
 
 ```
 interface ExecutionRun {
@@ -277,57 +269,6 @@ interface ExecutionRun {
   stderr: string;
   duration_ms: number;
   created_at: string;                  // ISO 8601
-}
-```
-
-### CP Problems (CP sessions only)
-
-```
-interface CpProblem {
-  id: string;                          // UUID
-  session_id: string;                  // FK → sessions (1:1)
-  judge: string;                       // 'codeforces' | 'atcoder' | 'leetcode' | 'other'
-  problem_url: string;
-  problem_id: string;                  // e.g., "1900A", "abc350_d"
-  problem_name: string;
-  difficulty: string | null;
-  topics: string[];                    // JSON array
-  verdict: 'unsolved' | 'accepted' | 'wrong_answer' | 'time_limit' | 'runtime_error' | 'attempted';
-  attempts: number;
-  solved_at: string | null;
-  editorial_notes: string;             // Markdown
-  created_at: string;
-  updated_at: string;
-}
-```
-
-### Test Cases (CP sessions only)
-
-```
-interface TestCase {
-  id: string;                          // UUID
-  problem_id: string;                  // FK → cp_problems
-  input: string;
-  expected_output: string;
-  is_sample: boolean;
-  created_at: string;
-}
-```
-
-### Repo Explorations (repo sessions only)
-
-```
-interface RepoExploration {
-  id: string;                          // UUID
-  session_id: string;                  // FK → sessions (1:1)
-  repo_url: string;
-  repo_name: string;                   // "owner/repo"
-  clone_path: string;
-  branch: string;
-  readme_summary: string;
-  interesting_files: string[];         // JSON array
-  created_at: string;
-  updated_at: string;
 }
 ```
 
@@ -358,7 +299,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   session_type TEXT NOT NULL DEFAULT 'lean'
-    CHECK (session_type IN ('lean', 'freeform', 'cp', 'repo')),
+    CHECK (session_type IN ('lean', 'freeform')),
   language TEXT NOT NULL DEFAULT 'lean',
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'active'
@@ -412,49 +353,6 @@ CREATE TABLE IF NOT EXISTS execution_runs (
   FOREIGN KEY (file_id) REFERENCES session_files(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS cp_problems (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL UNIQUE,
-  judge TEXT NOT NULL,
-  problem_url TEXT NOT NULL,
-  problem_id TEXT NOT NULL,
-  problem_name TEXT NOT NULL DEFAULT '',
-  difficulty TEXT,
-  topics TEXT NOT NULL DEFAULT '[]',
-  verdict TEXT NOT NULL DEFAULT 'unsolved'
-    CHECK (verdict IN ('unsolved', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'attempted')),
-  attempts INTEGER NOT NULL DEFAULT 0,
-  solved_at TEXT,
-  editorial_notes TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS test_cases (
-  id TEXT PRIMARY KEY,
-  problem_id TEXT NOT NULL,
-  input TEXT NOT NULL,
-  expected_output TEXT NOT NULL,
-  is_sample INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (problem_id) REFERENCES cp_problems(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS repo_explorations (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL UNIQUE,
-  repo_url TEXT NOT NULL,
-  repo_name TEXT NOT NULL,
-  clone_path TEXT NOT NULL,
-  branch TEXT NOT NULL DEFAULT 'main',
-  readme_summary TEXT NOT NULL DEFAULT '',
-  interesting_files TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -467,11 +365,8 @@ CREATE TABLE IF NOT EXISTS settings (
 * `session_files.session_id`
 * `lean_session_meta.session_id` (UNIQUE)
 * `execution_runs.session_id`, `execution_runs.created_at`
-* `cp_problems.session_id` (UNIQUE), `cp_problems.judge`, `cp_problems.verdict`
-* `test_cases.problem_id`
-* `repo_explorations.session_id` (UNIQUE)
 
-**JSON columns:** `tags`, `links`, `topics`, `interesting_files` stored as JSON TEXT. Parse/serialize in route handlers. Same pattern as Navigate and Granary.
+**JSON columns:** `tags`, `links` stored as JSON TEXT. Parse/serialize in route handlers. Same pattern as Navigate and Granary.
 
 ### Full-Text Search (FTS5)
 
@@ -518,7 +413,7 @@ All under `/api` prefix. RESTful verbs. Parameterized SQL only.
 |--------|------|-------------|
 | GET | `/api/sessions` | List sessions. Query params: `session_type`, `status`, `language`, `tag`, `search` (FTS5). |
 | GET | `/api/sessions/:id` | Get single session with files, type-specific data, and recent runs. |
-| POST | `/api/sessions` | Create session. For `lean`: scaffolds Lake project, runs `lake exe cache get`. For `cp`: accepts `problem_url`, fetches test cases via `oj`. For `repo`: accepts `repo_url`, clones repo. |
+| POST | `/api/sessions` | Create session. For `lean`: scaffolds Lake project, runs `lake exe cache get`. |
 | PUT | `/api/sessions/:id` | Update session metadata (title, tags, notes, status, links). |
 | DELETE | `/api/sessions/:id` | Delete session, all associated data, and working directory. |
 | PATCH | `/api/sessions/:id/status` | Update status. |
@@ -542,7 +437,7 @@ All under `/api` prefix. RESTful verbs. Parameterized SQL only.
 | GET | `/api/lean/:sessionId/build-output` | Get last build stdout/stderr. |
 | WS | `/ws/lean/:sessionId` | WebSocket endpoint for LSP message relay. |
 
-### Execution (freeform/CP only)
+### Execution (freeform only)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -550,41 +445,26 @@ All under `/api` prefix. RESTful verbs. Parameterized SQL only.
 | POST | `/api/sessions/:id/execute` | Execute file. Body: `{ file_id?, timeout_ms?, stdin? }`. |
 | GET | `/api/sessions/:id/runs/:runId` | Get single run with full output. |
 
-### CP Problems
+### Claude AI
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/cp/problems` | List all CP problems. Query params: `judge`, `verdict`, `topic`. |
-| GET | `/api/cp/problems/:id` | Get problem with test cases. |
-| PUT | `/api/cp/problems/:id` | Update problem metadata. |
-| POST | `/api/cp/problems/:id/test` | Run solution against test cases locally. |
-| POST | `/api/cp/problems/:id/fetch-tests` | Re-fetch test cases via `oj download`. |
+| POST | `/api/sessions/:id/claude/ask` | Send prompt with context to Claude. Body: `{ prompt, context: [{label, content}], mode }`. |
 
-### Test Cases
+### Scribe Proxy
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/cp/problems/:id/tests` | List test cases. |
-| POST | `/api/cp/problems/:id/tests` | Add custom test case. |
-| DELETE | `/api/cp/problems/:id/tests/:testId` | Delete test case. |
-
-### Repo Explorations
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/repos` | List all repo explorations. |
-| GET | `/api/repos/:id` | Get repo with session info. |
-| PUT | `/api/repos/:id` | Update repo metadata. |
-| GET | `/api/repos/:id/tree` | List repo files (depth-limited). |
-| GET | `/api/repos/:id/file?path=<path>` | Read a file from the cloned repo. |
+| GET | `/api/scribe/flowcharts` | List Scribe flowcharts (proxied to Scribe at port 3003). |
+| GET | `/api/scribe/nodes/search?title=<query>` | Search Scribe nodes by title. |
+| GET | `/api/scribe/nodes/:flowchartId/:nodeKey` | Get a specific Scribe node. |
 
 ### Stats
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/stats/overview` | Sessions by type, active count, total runs, CP solve rate. |
+| GET | `/api/stats/overview` | Sessions by type, active count, total runs. |
 | GET | `/api/stats/heatmap` | Activity by date. Query params: `start`, `end`. |
-| GET | `/api/stats/cp` | CP progress by verdict, judge, topic. |
 | GET | `/api/stats/languages` | Runs by language. |
 
 ### Settings
@@ -607,27 +487,18 @@ HTTP status codes: 201 (created), 400 (bad input), 404 (not found), 409 (conflic
 
 ---
 
-## Execution Service (freeform/CP)
+## Execution Service (freeform)
 
-The execution service (`server/src/services/execution.ts`) spawns child processes for non-Lean sessions:
+The execution service (`server/src/services/execution.ts`) spawns child processes for freeform sessions:
 
 * **Isolation:** Each session has its own working directory. Code runs with `cwd` set to that directory.
-* **Timeout:** Default 30 seconds for freeform, 10 seconds for CP. Processes killed with SIGTERM then SIGKILL after 2-second grace period.
+* **Timeout:** Default 30 seconds. Processes killed with SIGTERM then SIGKILL after 2-second grace period.
 * **Capture:** stdout and stderr captured via pipe. Truncated to 1MB each.
 * **Language commands:**
   - Python: `python3 <file>`
   - Julia: `julia <file>`
   - C++: `g++ -O2 -std=c++17 -o a.out <file> && ./a.out`
-* **stdin:** For CP testing, stdin is piped from the test case input.
 * **No sandboxing:** Personal tool running locally.
-
-### OJ Integration
-
-The `oj` service (`server/src/services/oj.ts`) wraps `online-judge-tools` for CP:
-
-* `oj download <url>` — fetch sample test cases
-* `oj submit <url> <file>` — submit to judge (optional, degrades to "open in browser")
-* Prerequisite: `pip install online-judge-tools`. Server checks availability on startup.
 
 ---
 
@@ -637,10 +508,8 @@ The `oj` service (`server/src/services/oj.ts`) wraps `online-judge-tools` for CP
 |------|-----------|-------------|
 | `/` | `DashboardPage` | Overview: active sessions, recent activity, heatmap |
 | `/sessions` | `SessionListPage` | Browse/filter/search all sessions |
-| `/sessions/new` | `NewSessionPage` | Create session (pick type, language, optional URL) |
+| `/sessions/new` | `NewSessionPage` | Create session (pick type, language) |
 | `/sessions/:id` | `SessionPage` | The main workbench (layout varies by session type) |
-| `/cp` | `CpPage` | CP problem list, progress by topic |
-| `/repos` | `RepoListPage` | Browse repo explorations |
 
 ### SessionPage (/sessions/:id) — Lean Mode
 
@@ -650,23 +519,22 @@ Split-pane layout:
 * **Right pane tabs:**
   - **Goal State** (default) — tactic goal state from `Lean/plainGoal`, updated on cursor move. Rendered with KaTeX. Shows "No goals" outside tactic blocks, "Proof complete ✓" when done.
   - **Messages** — Lean info messages (`#check`, `#eval`, `#print` output).
+  - **Claude** — AI assistant panel with context auto-assembly, mode selection, and response rendering.
   - **Notes** — Markdown+LaTeX session notes. Auto-saved with 1500ms debounce.
-  - **Links** — Cross-app references.
-* **Toolbar:** Build button (`lake build`), lake status indicator, file selector, session status.
+  - **Links** — Cross-app references with add/remove management.
+* **Toolbar:** Build button (`lake build`), lake status indicator, session status. "Ask Claude" button appears when error diagnostics are present.
 
-### SessionPage (/sessions/:id) — Freeform/CP/Repo Mode
+### SessionPage (/sessions/:id) — Freeform Mode
 
 Split-pane layout:
 
-* **Left pane: Editor** — CodeMirror 6 with language-appropriate syntax highlighting. File tabs. For repo sessions, read-only repo file tree sidebar + editable scratch files.
+* **Left pane: Editor** — CodeMirror 6 with language-appropriate syntax highlighting. File tabs.
 * **Right pane tabs:**
   - **Output** — stdout/stderr from latest run. Scrollable run history.
+  - **Claude** — AI assistant panel with context auto-assembly, mode selection, and response rendering.
   - **Notes** — Markdown+LaTeX session notes.
-  - **Tests** (CP only) — Test case list, run all/single, pass/fail diff.
-  - **Problem** (CP only) — Problem statement, verdict selector, editorial notes.
-  - **Repo** (repo only) — README, interesting files, metadata.
-  - **Links** — Cross-app references.
-* **Toolbar:** Run button, language indicator, session status.
+  - **Links** — Cross-app references with add/remove management.
+* **Toolbar:** Run button, language indicator, session status. "Ask Claude" button appears when a run fails.
 
 ---
 
@@ -682,8 +550,7 @@ Split-pane layout:
 * `python3` — for Python sessions
 * `julia` — for Julia sessions (optional)
 * `g++` — for C++ sessions
-* `oj` (online-judge-tools) — for CP (optional)
-* `git` — for repo cloning
+* `git` — for Lake/Mathlib dependency management
 
 **Do NOT add:** Any ORM, any state management library beyond React hooks + prop drilling from App.tsx. No Jupyter kernel protocol. No LSP client library on the frontend — implement the minimal LSP JSON-RPC client directly (it's just JSON over WebSocket).
 
@@ -750,6 +617,53 @@ Same pattern as Scribe and Granary:
 
 ---
 
+## Claude API Integration
+
+Pyramid integrates with the Anthropic Claude API for AI-assisted coding and proof development.
+
+### API Key Management
+
+The API key is stored in the `settings` table (key: `claude_api_key`). Users configure it via the Settings modal (gear icon in sidebar). The key is never exposed to the client — it is read server-side when making API calls.
+
+### Ask Endpoint
+
+```
+POST /api/sessions/:id/claude/ask
+Body: { prompt: string, context: Array<{label, content}>, mode: ClaudeMode }
+Response: { response: string, input_tokens: number, output_tokens: number }
+```
+
+The server reads the API key from settings, builds a system prompt based on the mode, assembles the context blocks into the user message, and calls the Anthropic Messages API (`claude-sonnet-4-20250514`).
+
+### System Prompt Modes
+
+Defined in `server/src/services/claude-prompts.ts`:
+
+| Mode | Description |
+|------|-------------|
+| `error_diagnosis` | Analyzes errors (Lean diagnostics or runtime errors). Separate prompts for Lean vs freeform. |
+| `formalization_help` | Helps translate informal math into Lean 4 proofs. Lean sessions only. |
+| `implementation_help` | Helps implement algorithms/methods. Freeform sessions only. |
+| `general` | Open-ended coding assistant. |
+
+### Context Auto-Assembly (Client)
+
+The `ClaudePanel` component (`client/src/components/ClaudePanel/ClaudePanel.tsx`) automatically assembles context:
+
+1. **Current file** — always included
+2. **Diagnostics** (Lean) — LSP error/warning messages
+3. **Goal state** (Lean) — current tactic goal
+4. **Last run output** (freeform) — stdout/stderr from failed runs
+5. **Scribe nodes** — fetched from linked Scribe flowchart nodes
+
+Users can also manually add Scribe nodes via a search picker.
+
+### Scribe Proxy
+
+Routes in `server/src/routes/scribe-proxy.ts` proxy requests to Scribe at `http://localhost:3003` with a 3-second timeout. Graceful degradation: if Scribe is not running, endpoints return empty results instead of errors.
+
+---
+
 ## Testing
 
 No test framework configured. Validate changes by running `npm run build`.
@@ -765,7 +679,7 @@ No test framework configured. Validate changes by running `npm run build`.
 5. Add type-specific tabs/panels in `SessionPage`
 6. Add type-specific routes in `server/src/routes/`
 
-## Adding a New Language (freeform/CP)
+## Adding a New Language (freeform)
 
 1. Add to execution service command map in `server/src/services/execution.ts`
 2. Add CodeMirror language mode in editor component
