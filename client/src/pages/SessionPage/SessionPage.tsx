@@ -14,6 +14,7 @@ import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer
 import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
+import FileTree from '../../components/FileTree/FileTree';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
@@ -341,33 +342,57 @@ function SessionPage() {
 
       <div className={styles.workbench} ref={containerRef}>
         <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
-          {session.files.length > 1 && (
-            <div className={styles.fileTabs}>
-              {session.files.map((f: SessionFile) => (
-                <button
-                  key={f.id}
-                  className={`${styles.fileTab} ${activeFileId === f.id ? styles.fileTabActive : ''}`}
-                  onClick={() => setActiveFileId(f.id)}
-                >
-                  {f.filename}
-                </button>
-              ))}
+          {isLean ? (
+            <>
+              {session.files.length > 1 && (
+                <div className={styles.fileTabs}>
+                  {session.files.map((f: SessionFile) => (
+                    <button
+                      key={f.id}
+                      className={`${styles.fileTab} ${activeFileId === f.id ? styles.fileTabActive : ''}`}
+                      onClick={() => setActiveFileId(f.id)}
+                    >
+                      {f.filename}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
+              <div className={styles.editorContainer}>
+                <CodeEditor
+                  value={fileContent}
+                  language={session.language}
+                  onChange={handleSaveFile}
+                  onCursorChange={handleCursorChange}
+                  diagnostics={lsp.diagnostics}
+                  fontSize={fontSize}
+                  onInsertRef={insertRef}
+                />
+              </div>
+            </>
+          ) : (
+            <div className={styles.editorWithTree}>
+              <div className={styles.fileTreePanel}>
+                <FileTree
+                  sessionId={id!}
+                  files={session.files}
+                  activeFileId={activeFileId}
+                  onSelectFile={setActiveFileId}
+                  onFilesChanged={refresh}
+                  sessionLanguage={session.language}
+                />
+              </div>
+              <div className={styles.editorContainer}>
+                <CodeEditor
+                  value={fileContent}
+                  language={session.language}
+                  onChange={handleSaveFile}
+                  fontSize={fontSize}
+                  onInsertRef={insertRef}
+                />
+              </div>
             </div>
           )}
-          {isLean && (
-            <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
-          )}
-          <div className={styles.editorContainer}>
-            <CodeEditor
-              value={fileContent}
-              language={session.language}
-              onChange={handleSaveFile}
-              onCursorChange={isLean ? handleCursorChange : undefined}
-              diagnostics={isLean ? lsp.diagnostics : undefined}
-              fontSize={fontSize}
-              onInsertRef={insertRef}
-            />
-          </div>
         </div>
 
         <div
