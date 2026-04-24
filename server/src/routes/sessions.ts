@@ -5,6 +5,7 @@ import path from 'path';
 import db from '../db.js';
 import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
+import { notebookKernel } from '../services/notebook-kernel.js';
 
 const router = Router();
 
@@ -120,17 +121,33 @@ router.post('/', async (req: Request, res: Response) => {
       VALUES (?, ?, ?, ?, ?, 'active', ?, '', ?, ?, ?)
     `).run(id, title, session_type, language, JSON.stringify(tags), JSON.stringify(links), workingDir, now, now);
 
-    // Create default file based on language
+    // Create default file based on session type / language
+    const isNotebook = session_type === 'notebook';
     const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : 'py';
-    const defaultFilename = isLean ? 'Main.lean' : `main.${ext}`;
+    const defaultFilename = isLean ? 'Main.lean' : isNotebook ? 'notebook.ipynb' : `main.${ext}`;
     const fileId = uuidv4();
+    const fileType = isNotebook ? 'source' : 'source';
+    const fileLanguage = isNotebook ? 'python' : language;
 
     db.prepare(`
       INSERT INTO session_files (id, session_id, filename, file_type, language, is_primary, created_at, updated_at)
-      VALUES (?, ?, ?, 'source', ?, 1, ?, ?)
-    `).run(fileId, id, defaultFilename, language, now, now);
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+    `).run(fileId, id, defaultFilename, fileType, fileLanguage, now, now);
 
-    if (!isLean) {
+    if (isNotebook) {
+      const emptyNb = {
+        cells: [
+          { cell_type: 'code', source: '', metadata: {}, outputs: [], execution_count: null, id: uuidv4() },
+        ],
+        metadata: {
+          kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+          language_info: { name: 'python' },
+        },
+        nbformat: 4,
+        nbformat_minor: 5,
+      };
+      fs.writeFileSync(path.join(absWorkingDir, defaultFilename), JSON.stringify(emptyNb, null, 1));
+    } else if (!isLean) {
       fs.writeFileSync(path.join(absWorkingDir, defaultFilename), '');
     }
 
@@ -207,6 +224,9 @@ router.delete('/:id', (req: Request, res: Response) => {
     if (session.session_type === 'lean') {
       leanLsp.stopLsp(req.params.id as string);
       leanProject.deleteProject(req.params.id as string);
+    }
+    if (session.session_type === 'notebook') {
+      notebookKernel.stopKernel(req.params.id as string);
     }
 
     // Delete working directory

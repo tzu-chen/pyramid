@@ -13,7 +13,9 @@ import settingsRouter from './routes/settings.js';
 import leanRouter from './routes/lean.js';
 import claudeRouter from './routes/claude.js';
 import scribeProxyRouter from './routes/scribe-proxy.js';
+import notebooksRouter from './routes/notebooks.js';
 import { leanLsp } from './services/lean-lsp.js';
+import { notebookKernel } from './services/notebook-kernel.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3007', 10);
@@ -30,6 +32,7 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/lean', leanRouter);
 app.use('/api/sessions', claudeRouter);
 app.use('/api/scribe', scribeProxyRouter);
+app.use('/api/notebooks', notebooksRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -54,32 +57,40 @@ server.on('upgrade', (request, socket, head) => {
   const { pathname } = parseUrl(request.url || '');
 
   // Match /ws/lean/:sessionId
-  const match = pathname?.match(/^\/ws\/lean\/([a-f0-9-]+)$/);
-  if (!match) {
-    socket.destroy();
+  const leanMatch = pathname?.match(/^\/ws\/lean\/([a-f0-9-]+)$/);
+  if (leanMatch) {
+    const sessionId = leanMatch[1];
+    const meta = db.prepare('SELECT project_path FROM lean_session_meta WHERE session_id = ?')
+      .get(sessionId) as { project_path: string } | undefined;
+    if (!meta) { socket.destroy(); return; }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const projectPath = path.join(__dirname, '..', 'data', 'lean-projects', sessionId);
+      leanLsp.handleWebSocket(ws, sessionId, projectPath);
+    });
     return;
   }
 
-  const sessionId = match[1];
-
-  // Verify session exists and is a lean session
-  const meta = db.prepare('SELECT project_path FROM lean_session_meta WHERE session_id = ?')
-    .get(sessionId) as { project_path: string } | undefined;
-
-  if (!meta) {
-    socket.destroy();
+  // Match /ws/notebook/:sessionId
+  const nbMatch = pathname?.match(/^\/ws\/notebook\/([a-f0-9-]+)$/);
+  if (nbMatch) {
+    const sessionId = nbMatch[1];
+    const session = db.prepare('SELECT session_type, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'notebook') { socket.destroy(); return; }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = path.join(__dirname, '..', session.working_dir);
+      notebookKernel.handleWebSocket(ws, sessionId, cwd);
+    });
     return;
   }
 
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    const projectPath = path.join(__dirname, '..', 'data', 'lean-projects', sessionId);
-    leanLsp.handleWebSocket(ws, sessionId, projectPath);
-  });
+  socket.destroy();
 });
 
 // Graceful shutdown
 function shutdown() {
   leanLsp.forceStopAll();
+  notebookKernel.forceStopAll();
   server.close(() => {
     process.exit(0);
   });

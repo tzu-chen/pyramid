@@ -21,7 +21,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     session_type TEXT NOT NULL DEFAULT 'freeform'
-      CHECK (session_type IN ('freeform', 'lean')),
+      CHECK (session_type IN ('freeform', 'lean', 'notebook')),
     language TEXT NOT NULL DEFAULT 'python',
     tags TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'active'
@@ -122,5 +122,43 @@ db.exec(`
     VALUES (NEW.rowid, NEW.title, NEW.notes, NEW.tags);
   END;
 `);
+
+// Migration: expand sessions.session_type CHECK to include 'notebook'.
+// Probe by attempting an insert; if it fails, rebuild the sessions table.
+try {
+  const probe = db.transaction(() => {
+    db.prepare(`INSERT INTO sessions (id, title, session_type, language, working_dir, created_at, updated_at)
+      VALUES ('__probe__', '', 'notebook', '', '', '', '')`).run();
+    throw new Error('rollback');
+  });
+  try { probe(); } catch (e) { if ((e as Error).message !== 'rollback') throw e; }
+} catch (err) {
+  const msg = (err as Error).message || '';
+  if (/CHECK constraint failed/i.test(msg) || /constraint/i.test(msg)) {
+    db.exec(`
+      CREATE TABLE sessions_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        session_type TEXT NOT NULL DEFAULT 'freeform'
+          CHECK (session_type IN ('freeform', 'lean', 'notebook')),
+        language TEXT NOT NULL DEFAULT 'python',
+        tags TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'paused', 'completed', 'archived')),
+        links TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NOT NULL DEFAULT '',
+        working_dir TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO sessions_new SELECT id, title, session_type, language, tags, status, links, notes, working_dir, created_at, updated_at FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_new RENAME TO sessions;
+      CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(session_type);
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+      CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+    `);
+  }
+}
 
 export default db;

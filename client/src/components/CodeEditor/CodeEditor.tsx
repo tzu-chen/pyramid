@@ -1,11 +1,13 @@
 import { useEffect, useRef, useCallback, MutableRefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
-import { EditorState, Extension, Compartment } from '@codemirror/state';
-import { ViewPlugin, ViewUpdate } from '@codemirror/view';
-import { python } from '@codemirror/lang-python';
+import { EditorState, Extension, Compartment, Prec } from '@codemirror/state';
+import { ViewPlugin, ViewUpdate, keymap } from '@codemirror/view';
+import { python, pythonLanguage, localCompletionSource, globalCompletion } from '@codemirror/lang-python';
 import { cpp } from '@codemirror/lang-cpp';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
 import { linter } from '@codemirror/lint';
+import { indentMore, indentLess } from '@codemirror/commands';
+import { acceptCompletion, completionStatus, startCompletion, CompletionContext, CompletionResult as CMCompletionResult } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useTheme } from '../../contexts/ThemeContext';
 import { UNICODE_MAP } from '../../data/unicodeSymbols';
@@ -183,6 +185,14 @@ export interface LspDiagnostic {
 
 // --- Main Component ---
 
+export interface ExternalCompletion {
+  matches: { label: string; type?: string; detail?: string }[];
+  from: number; // absolute doc position where the replacement starts
+  to: number;   // absolute doc position where the replacement ends
+}
+
+export type ExternalCompletionSource = (code: string, cursorPos: number) => Promise<ExternalCompletion | null>;
+
 interface CodeEditorProps {
   value: string;
   language: string;
@@ -192,19 +202,43 @@ interface CodeEditorProps {
   readOnly?: boolean;
   fontSize?: number;
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
+  externalCompletion?: ExternalCompletionSource;
 }
 
-function getLanguageExtension(language: string) {
+function pythonWithCompletion(): Extension {
+  return [
+    python(),
+    pythonLanguage.data.of({ autocomplete: localCompletionSource }),
+    pythonLanguage.data.of({ autocomplete: globalCompletion }),
+  ];
+}
+
+function getLanguageExtension(language: string): Extension {
   switch (language) {
-    case 'python': return python();
+    case 'python': return pythonWithCompletion();
     case 'cpp': return cpp();
-    case 'julia': return python(); // Close enough syntax for basic highlighting
+    case 'julia': return pythonWithCompletion(); // Close enough syntax for basic highlighting
     case 'lean': return leanLanguage();
-    default: return python();
+    default: return pythonWithCompletion();
   }
 }
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef }: CodeEditorProps) {
+// Tab keymap: accept active completion, else indent the selection.
+// Shift+Tab dedents. Ctrl/Cmd+Space opens completions.
+// Highest precedence so Tab does not move focus out of the editor.
+const tabKeymap = Prec.highest(keymap.of([
+  {
+    key: 'Tab',
+    run: (view) => {
+      if (completionStatus(view.state) === 'active') return acceptCompletion(view);
+      return indentMore(view);
+    },
+    shift: indentLess,
+  },
+  { key: 'Mod-Space', run: startCompletion },
+]));
+
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, externalCompletion }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -215,6 +249,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   onChangeRef.current = onChange;
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
+  const externalCompletionRef = useRef(externalCompletion);
+  externalCompletionRef.current = externalCompletion;
 
   const createEditor = useCallback(() => {
     if (!containerRef.current) return;
@@ -225,6 +261,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
 
     const extensions: Extension[] = [
       basicSetup,
+      tabKeymap,
       getLanguageExtension(language),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -243,6 +280,32 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
 
     if (language === 'lean') {
       extensions.push(unicodeInputExtension());
+    }
+
+    if (language === 'python' || language === 'julia') {
+      const externalSource = async (ctx: CompletionContext): Promise<CMCompletionResult | null> => {
+        const fn = externalCompletionRef.current;
+        if (!fn) return null;
+        // Trigger on word char, '.', or explicit invocation.
+        const before = ctx.state.sliceDoc(Math.max(0, ctx.pos - 1), ctx.pos);
+        const isWord = /\w/.test(before);
+        const isDot = before === '.';
+        if (!ctx.explicit && !isWord && !isDot) return null;
+        const code = ctx.state.doc.toString();
+        const result = await fn(code, ctx.pos);
+        if (!result || result.matches.length === 0) return null;
+        return {
+          from: result.from,
+          to: result.to,
+          options: result.matches.map(m => ({
+            label: m.label,
+            type: m.type,
+            detail: m.detail,
+          })),
+          validFor: /^[\w.]*$/,
+        };
+      };
+      extensions.push(pythonLanguage.data.of({ autocomplete: externalSource }));
     }
 
     if (scheme.type === 'dark') {

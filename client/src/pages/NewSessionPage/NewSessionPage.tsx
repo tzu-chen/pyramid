@@ -36,6 +36,7 @@ function NewSessionPage() {
 
   const typeOptions: { value: SessionType; label: string; description: string }[] = [
     { value: 'freeform', label: 'Freeform', description: 'Open-ended computation and experimentation' },
+    { value: 'notebook', label: 'Notebook', description: 'Jupyter notebook with cell-by-cell execution (Python)' },
     { value: 'lean', label: 'Lean', description: 'Formal proof writing in Lean 4' },
   ];
 
@@ -54,6 +55,7 @@ function NewSessionPage() {
                 onClick={() => {
                   setSessionType(opt.value);
                   if (opt.value === 'lean') setLanguage('lean');
+                  else if (opt.value === 'notebook') setLanguage('python');
                   else if (language === 'lean') setLanguage('python');
                 }}
               >
@@ -73,12 +75,13 @@ function NewSessionPage() {
             onChange={e => setTitle(e.target.value)}
             placeholder={
               sessionType === 'lean' ? 'e.g., Hahn-Banach Theorem' :
+              sessionType === 'notebook' ? 'e.g., Transformer attention analysis' :
               'e.g., SPDE finite element simulation'
             }
           />
         </div>
 
-        {sessionType !== 'lean' && (
+        {sessionType === 'freeform' && (
           <div className={styles.field}>
             <label className={styles.label}>Language</label>
             <select className={styles.select} value={language} onChange={e => setLanguage(e.target.value)}>

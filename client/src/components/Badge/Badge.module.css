@@ -29,6 +29,16 @@
   background-color: #2b1533;
 }
 
+.notebook {
+  background-color: #fde7c1;
+  color: #9a5b00;
+}
+
+[data-theme="dark"] .notebook {
+  background-color: #3a2800;
+  color: #f7b045;
+}
+
 .success {
   background-color: var(--color-success-light);
   color: var(--color-success);

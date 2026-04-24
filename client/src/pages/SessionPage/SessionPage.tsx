@@ -15,6 +15,7 @@ import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
+import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
@@ -62,6 +63,7 @@ function SessionPage() {
   const [buildOutput, setBuildOutput] = useState('');
 
   const isLean = session?.session_type === 'lean';
+  const isNotebook = session?.session_type === 'notebook';
 
   // Lean LSP hook
   const leanProjectPath = session?.lean_meta?.absolute_project_path ?? null;
@@ -93,6 +95,8 @@ function SessionPage() {
       // Set default tab based on session type
       if (session.session_type === 'lean') {
         setActiveTab('goalState');
+      } else if (session.session_type === 'notebook') {
+        setActiveTab('claude');
       } else {
         setActiveTab('output');
       }
@@ -215,6 +219,7 @@ function SessionPage() {
   };
 
   const handleApplyCode = useCallback((code: string) => {
+    if (isNotebook) return; // would overwrite .ipynb JSON — user copies manually
     if (id && activeFileId) {
       setFileContent(code);
       fileService.updateContent(id, activeFileId, code).catch(() => {});
@@ -222,7 +227,7 @@ function SessionPage() {
         lspRef.current.sendDidChange(fileUriRef.current, code);
       }
     }
-  }, [id, activeFileId, isLean]);
+  }, [id, activeFileId, isLean, isNotebook]);
 
   const updateLinks = async (newLinks: SessionLink[]) => {
     if (!id || !session) return;
@@ -301,7 +306,7 @@ function SessionPage() {
       <div className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
           <h2 className={styles.sessionTitle}>{session.title}</h2>
-          <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean'} />
+          <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean' | 'notebook'} />
           <Badge label={session.language} />
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />
@@ -327,7 +332,7 @@ function SessionPage() {
                 <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
               )}
             </>
-          ) : (
+          ) : isNotebook ? null : (
             <>
               <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
                 {executing ? 'Running...' : 'Run'}
@@ -342,7 +347,9 @@ function SessionPage() {
 
       <div className={styles.workbench} ref={containerRef}>
         <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
-          {isLean ? (
+          {isNotebook && activeFileId ? (
+            <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+          ) : isLean ? (
             <>
               {session.files.length > 1 && (
                 <div className={styles.fileTabs}>
@@ -437,12 +444,14 @@ function SessionPage() {
               </>
             ) : (
               <>
-                <button
-                  className={`${styles.tab} ${activeTab === 'output' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('output')}
-                >
-                  Output
-                </button>
+                {!isNotebook && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'output' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('output')}
+                  >
+                    Output
+                  </button>
+                )}
                 <button
                   className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('claude')}
@@ -639,7 +648,7 @@ function SessionPage() {
             {activeTab === 'claude' && (
               <ClaudePanel
                 sessionId={id!}
-                sessionType={session.session_type as 'lean' | 'freeform'}
+                sessionType={isLean ? 'lean' : 'freeform'}
                 fileContent={fileContent}
                 fileName={session.files.find(f => f.id === activeFileId)?.filename || ''}
                 diagnostics={isLean ? lsp.diagnostics : undefined}

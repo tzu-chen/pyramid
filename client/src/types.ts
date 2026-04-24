@@ -1,4 +1,4 @@
-export type SessionType = 'freeform' | 'lean';
+export type SessionType = 'freeform' | 'lean' | 'notebook';
 export type SessionStatus = 'active' | 'paused' | 'completed' | 'archived';
 export type Language = 'python' | 'julia' | 'cpp' | 'lean';
 export type FileType = 'source' | 'output' | 'plot' | 'data' | 'other';

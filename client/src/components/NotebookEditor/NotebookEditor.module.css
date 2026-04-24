@@ -1,0 +1,264 @@
+.notebook {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.toolbar button {
+  padding: 4px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.statusDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.statusIdle { background: #4ade80; }
+.statusBusy { background: #facc15; animation: pulse 1s infinite; }
+.statusStarting { background: #60a5fa; animation: pulse 1s infinite; }
+.statusDisconnected { background: #94a3b8; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.statusLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cellList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cell {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cellActive {
+  border-color: var(--accent, #3b82f6);
+}
+
+.cellHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.cellLabel {
+  font-family: var(--font-mono, monospace);
+}
+
+.cellActions {
+  display: flex;
+  gap: 4px;
+}
+
+.cellActions button {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.cellActions button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.cellActions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cellBody {
+  display: flex;
+}
+
+.executionGutter {
+  width: 56px;
+  flex-shrink: 0;
+  padding: 6px 6px 6px 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border);
+  background: var(--bg-primary);
+  text-align: right;
+}
+
+.cellContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.codeArea {
+  min-height: 32px;
+}
+
+.markdownArea {
+  padding: 8px 10px;
+  cursor: text;
+  min-height: 32px;
+}
+
+.markdownPlaceholder {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.markdownTextarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px 10px;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.outputs {
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+  padding: 6px 10px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.outputsEmpty {
+  display: none;
+}
+
+.stream {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0;
+  word-break: break-word;
+}
+
+.stdout { color: var(--text-primary); }
+.stderr { color: #ef4444; }
+
+.resultText {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.resultHtml {
+  font-size: 13px;
+}
+
+.resultImage {
+  max-width: 100%;
+  margin: 4px 0;
+}
+
+.error {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: #ef4444;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.addCellBar {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.addCellBar button {
+  padding: 4px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.addCellBar button:hover {
+  background: var(--bg-hover);
+}
+
+.insertBelow {
+  display: flex;
+  justify-content: center;
+  padding: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.cell:hover + .insertBelow,
+.insertBelow:hover {
+  opacity: 1;
+}
+
+.insertBelow button {
+  padding: 1px 8px;
+  font-size: 11px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
