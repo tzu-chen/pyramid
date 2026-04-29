@@ -113,8 +113,10 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
-  const notebookRef = useRef<Notebook | null>(null);
-  notebookRef.current = notebook;
+  const notebookDataRef = useRef<Notebook | null>(null);
+  notebookDataRef.current = notebook;
+  const notebookRef = useRef<HTMLDivElement>(null);
+  const lastDPressRef = useRef<number>(0);
 
   // Load notebook from disk when fileId changes
   useEffect(() => {
@@ -234,7 +236,7 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
   }, [kernel]);
 
   const runCell = useCallback((cellId: string) => {
-    const nb = notebookRef.current;
+    const nb = notebookDataRef.current;
     if (!nb) return;
     const cell = nb.cells.find(c => c.id === cellId);
     if (!cell || cell.cell_type !== 'code') return;
@@ -250,7 +252,7 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
   }, [kernel]);
 
   const runAll = useCallback(() => {
-    const nb = notebookRef.current;
+    const nb = notebookDataRef.current;
     if (!nb) return;
     for (const c of nb.cells) {
       if (c.cell_type === 'code' && c.source.trim()) runCell(c.id);
@@ -277,6 +279,17 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
       const idx = prev.cells.findIndex(c => c.id === afterId);
       const next = [...prev.cells];
       next.splice(idx + 1, 0, newCell);
+      setActiveCellId(newCell.id);
+      return { ...prev, cells: next };
+    });
+  }, []);
+
+  const insertCellAt = useCallback((index: number, type: CellType) => {
+    setNotebook(prev => {
+      if (!prev) return prev;
+      const newCell: NotebookCell = { id: newId(), cell_type: type, source: '', outputs: [], execution_count: null };
+      const next = [...prev.cells];
+      next.splice(index, 0, newCell);
       setActiveCellId(newCell.id);
       return { ...prev, cells: next };
     });
@@ -312,12 +325,100 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
     });
   }, []);
 
+  const focusActiveCellEditor = useCallback((cellId: string) => {
+    const root = notebookRef.current;
+    if (!root) return;
+    const cellEl = root.querySelector(`[data-cell-id="${cellId}"]`);
+    if (!cellEl) return;
+    const cm = cellEl.querySelector<HTMLElement>('.cm-content');
+    if (cm) { cm.focus(); return; }
+    const ta = cellEl.querySelector<HTMLTextAreaElement>('textarea');
+    if (ta) ta.focus();
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const inEditor = !!target.closest('.cm-editor') || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT';
+
+    if (e.key === 'Escape' && inEditor) {
+      e.preventDefault();
+      (target as HTMLElement).blur?.();
+      notebookRef.current?.focus();
+      return;
+    }
+    if (inEditor) return;
+
+    const nb = notebookDataRef.current;
+    if (!nb || !activeCellId) return;
+    const idx = nb.cells.findIndex(c => c.id === activeCellId);
+    if (idx === -1) return;
+
+    if (e.key !== 'd') lastDPressRef.current = 0;
+
+    switch (e.key) {
+      case 'a':
+        e.preventDefault();
+        insertCellAt(idx, 'code');
+        break;
+      case 'b':
+        e.preventDefault();
+        insertCellAt(idx + 1, 'code');
+        break;
+      case 'm':
+        e.preventDefault();
+        changeCellType(activeCellId, 'markdown');
+        break;
+      case 'y':
+        e.preventDefault();
+        changeCellType(activeCellId, 'code');
+        break;
+      case 'j':
+      case 'ArrowDown':
+        if (idx + 1 < nb.cells.length) {
+          e.preventDefault();
+          setActiveCellId(nb.cells[idx + 1].id);
+        }
+        break;
+      case 'k':
+      case 'ArrowUp':
+        if (idx > 0) {
+          e.preventDefault();
+          setActiveCellId(nb.cells[idx - 1].id);
+        }
+        break;
+      case 'Enter':
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          focusActiveCellEditor(activeCellId);
+        }
+        break;
+      case 'd': {
+        const now = Date.now();
+        if (lastDPressRef.current && now - lastDPressRef.current < 600) {
+          e.preventDefault();
+          const nextActive = nb.cells[idx + 1]?.id ?? nb.cells[idx - 1]?.id ?? null;
+          deleteCell(activeCellId);
+          if (nextActive) setActiveCellId(nextActive);
+          lastDPressRef.current = 0;
+        } else {
+          lastDPressRef.current = now;
+        }
+        break;
+      }
+    }
+  }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor]);
+
   if (!notebook) {
     return <div className={styles.notebook}><div className={styles.toolbar}>Loading notebook...</div></div>;
   }
 
   return (
-    <div className={styles.notebook}>
+    <div
+      className={styles.notebook}
+      ref={notebookRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       <div className={styles.toolbar}>
         <span className={`${styles.statusDot} ${statusDotClass(kernel.status)}`} />
         <span className={styles.statusLabel}>{statusLabel(kernel.status)}</span>
@@ -384,7 +485,7 @@ function CellView(props: CellViewProps) {
 
   return (
     <>
-      <div className={`${styles.cell} ${active ? styles.cellActive : ''}`} onClick={onFocus}>
+      <div className={`${styles.cell} ${active ? styles.cellActive : ''}`} data-cell-id={cell.id} onClick={onFocus}>
         <div className={styles.cellHeader}>
           <span className={styles.cellLabel}>{cell.cell_type}</span>
           <div className={styles.cellActions}>

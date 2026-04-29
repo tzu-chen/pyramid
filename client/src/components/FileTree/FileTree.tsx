@@ -264,11 +264,17 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
     try {
       const paths = await fileService.listTree(sessionId);
       setTreePaths(paths);
+      // The server auto-registers files present on disk but missing from the DB.
+      // If we see a file path here that isn't in our current `files` prop, the
+      // server just inserted it — refresh the parent so we pick up its ID.
+      const known = new Set(files.map((f) => f.filename));
+      const hasUnknownFile = paths.some((p) => !p.endsWith('/') && !known.has(p));
+      if (hasUnknownFile) onFilesChanged();
     } catch {
       // Fallback: derive from files
       setTreePaths(files.map((f) => f.filename));
     }
-  }, [sessionId, files]);
+  }, [sessionId, files, onFilesChanged]);
 
   useEffect(() => {
     refreshTree();

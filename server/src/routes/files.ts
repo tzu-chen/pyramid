@@ -434,7 +434,27 @@ router.post('/:id/upload', upload.single('file'), (req: Request, res: Response) 
   }
 });
 
+// Names ignored everywhere in tree walks: build/cache outputs, VCS metadata, OS junk.
+const IGNORED_NAMES = new Set([
+  '.lake', '.git', 'node_modules', '__pycache__', '.ipynb_checkpoints',
+  '.cache', '.venv', 'venv', 'dist', 'build', '.DS_Store',
+]);
+
+function inferLanguageFromFilename(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    py: 'python', jl: 'julia',
+    cpp: 'cpp', cc: 'cpp', cxx: 'cpp', h: 'cpp', hpp: 'cpp',
+    lean: 'lean', ipynb: 'python',
+    js: 'javascript', ts: 'typescript', md: 'markdown', txt: '',
+  };
+  return map[ext] ?? '';
+}
+
 // GET /api/sessions/:id/tree (directory listing)
+// Side effect: orphan files (present on disk, missing from session_files) are
+// auto-registered. Without this, clicking them in the FileTree resolves to no
+// fileId and the editor stays empty — which is the symptom users see.
 router.get('/:id/tree', (req: Request, res: Response) => {
   try {
     const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as Record<string, unknown> | undefined;
@@ -445,27 +465,50 @@ router.get('/:id/tree', (req: Request, res: Response) => {
 
     const sessionRoot = getSessionRoot(session.working_dir as string);
     const entries: string[] = [];
+    const filesOnDisk: string[] = [];
 
     function walk(dir: string, prefix: string) {
       if (!fs.existsSync(dir)) return;
       const items = fs.readdirSync(dir, { withFileTypes: true });
-      // Sort: directories first, then alphabetical
       items.sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
       for (const item of items) {
+        if (IGNORED_NAMES.has(item.name)) continue;
         const rel = prefix ? `${prefix}/${item.name}` : item.name;
         if (item.isDirectory()) {
           entries.push(rel + '/');
           walk(path.join(dir, item.name), rel);
         } else {
           entries.push(rel);
+          filesOnDisk.push(rel);
         }
       }
     }
 
     walk(sessionRoot, '');
+
+    // Auto-register orphans, but only for sessions that surface files through
+    // the FileTree. Lean sessions use a fixed tab strip and would otherwise
+    // get cluttered with Lake config files (lakefile.toml, lean-toolchain, …).
+    if (session.session_type !== 'lean') {
+      const known = db.prepare('SELECT filename FROM session_files WHERE session_id = ?').all(req.params.id) as { filename: string }[];
+      const knownSet = new Set(known.map(r => r.filename));
+      const orphans = filesOnDisk.filter(p => !knownSet.has(p));
+      if (orphans.length > 0) {
+        const now = getCstTimestamp();
+        const insert = db.prepare(`
+          INSERT INTO session_files (id, session_id, filename, file_type, language, is_primary, created_at, updated_at)
+          VALUES (?, ?, ?, 'source', ?, 0, ?, ?)
+        `);
+        const tx = db.transaction((paths: string[]) => {
+          for (const p of paths) insert.run(uuidv4(), req.params.id, p, inferLanguageFromFilename(p), now, now);
+        });
+        tx(orphans);
+      }
+    }
+
     res.json({ files: entries });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

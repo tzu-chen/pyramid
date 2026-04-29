@@ -3,7 +3,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--color-bg);
 }
 
 .toolbar {
@@ -11,23 +11,23 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
   flex-shrink: 0;
 }
 
 .toolbar button {
   padding: 4px 10px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--text-primary);
+  color: var(--color-text);
   cursor: pointer;
   font-size: 12px;
 }
 
 .toolbar button:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--color-bg-tertiary);
 }
 
 .toolbar button:disabled {
@@ -55,7 +55,7 @@
 
 .statusLabel {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .cellList {
@@ -68,14 +68,14 @@
 }
 
 .cell {
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--color-bg-secondary);
   overflow: hidden;
 }
 
 .cellActive {
-  border-color: var(--accent, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .cellHeader {
@@ -83,10 +83,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .cellLabel {
@@ -101,16 +101,16 @@
 .cellActions button {
   padding: 2px 8px;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 11px;
 }
 
 .cellActions button:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
 }
 
 .cellActions button:disabled {
@@ -128,9 +128,9 @@
   padding: 6px 6px 6px 8px;
   font-family: var(--font-mono, monospace);
   font-size: 11px;
-  color: var(--text-secondary);
-  border-right: 1px solid var(--border);
-  background: var(--bg-primary);
+  color: var(--color-text-secondary);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
   text-align: right;
 }
 
@@ -150,7 +150,7 @@
 }
 
 .markdownPlaceholder {
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   font-style: italic;
 }
 
@@ -159,8 +159,8 @@
   min-height: 80px;
   padding: 8px 10px;
   border: none;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
   font-family: var(--font-mono, monospace);
   font-size: 13px;
   resize: vertical;
@@ -169,8 +169,8 @@
 }
 
 .outputs {
-  border-top: 1px solid var(--border);
-  background: var(--bg-primary);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
   padding: 6px 10px;
   max-height: 400px;
   overflow: auto;
@@ -188,7 +188,7 @@
   word-break: break-word;
 }
 
-.stdout { color: var(--text-primary); }
+.stdout { color: var(--color-text); }
 .stderr { color: #ef4444; }
 
 .resultText {
@@ -196,7 +196,7 @@
   font-size: 12px;
   white-space: pre-wrap;
   margin: 0;
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 .resultHtml {
@@ -221,23 +221,23 @@
   gap: 6px;
   justify-content: center;
   padding: 8px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
   flex-shrink: 0;
 }
 
 .addCellBar button {
   padding: 4px 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--text-primary);
+  color: var(--color-text);
   cursor: pointer;
   font-size: 12px;
 }
 
 .addCellBar button:hover {
-  background: var(--bg-hover);
+  background: var(--color-bg-tertiary);
 }
 
 .insertBelow {
@@ -256,9 +256,9 @@
 .insertBelow button {
   padding: 1px 8px;
   font-size: 11px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 3px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
 }

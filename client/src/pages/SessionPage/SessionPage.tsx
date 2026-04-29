@@ -49,6 +49,9 @@ function SessionPage() {
   const { fontSize } = useEditorFontSize();
   const insertRef = useRef<((text: string) => void) | null>(null);
 
+  // Notebook file tree collapse state
+  const [notebookTreeCollapsed, setNotebookTreeCollapsed] = useState(false);
+
   // Resizable split pane
   const { ratio, onDragStart, containerRef } = useResizablePanel({
     storageKey: 'pyramid_panel_ratio',
@@ -348,7 +351,41 @@ function SessionPage() {
       <div className={styles.workbench} ref={containerRef}>
         <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
           {isNotebook && activeFileId ? (
-            <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+            <div className={styles.editorWithTree}>
+              {!notebookTreeCollapsed && (
+                <div className={styles.fileTreePanel}>
+                  <div className={styles.fileTreeHeader}>
+                    <button
+                      className={styles.fileTreeToggle}
+                      onClick={() => setNotebookTreeCollapsed(true)}
+                      title="Collapse file browser"
+                    >
+                      ‹
+                    </button>
+                  </div>
+                  <FileTree
+                    sessionId={id!}
+                    files={session.files}
+                    activeFileId={activeFileId}
+                    onSelectFile={setActiveFileId}
+                    onFilesChanged={refresh}
+                    sessionLanguage={session.language}
+                  />
+                </div>
+              )}
+              {notebookTreeCollapsed && (
+                <button
+                  className={styles.fileTreeExpandBtn}
+                  onClick={() => setNotebookTreeCollapsed(false)}
+                  title="Show file browser"
+                >
+                  ›
+                </button>
+              )}
+              <div className={styles.editorContainer}>
+                <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+              </div>
+            </div>
           ) : isLean ? (
             <>
               {session.files.length > 1 && (
