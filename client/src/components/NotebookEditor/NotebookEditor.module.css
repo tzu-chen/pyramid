@@ -72,6 +72,7 @@
   border-radius: 6px;
   background: var(--color-bg-secondary);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .cellActive {
@@ -168,8 +169,41 @@
   box-sizing: border-box;
 }
 
-.outputs {
+.outputsHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
   border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.outputsHeader:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.outputsChevron {
+  display: inline-block;
+  width: 10px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  transition: transform 0.1s;
+}
+
+.outputsChevronCollapsed {
+  transform: rotate(-90deg);
+}
+
+.outputsCount {
+  flex: 1;
+  font-family: var(--font-mono, monospace);
+}
+
+.outputs {
   background: var(--color-bg);
   padding: 6px 10px;
   max-height: 400px;
@@ -246,6 +280,7 @@
   padding: 2px;
   opacity: 0;
   transition: opacity 0.1s;
+  flex-shrink: 0;
 }
 
 .cell:hover + .insertBelow,

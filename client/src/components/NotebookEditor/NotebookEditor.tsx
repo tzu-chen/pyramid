@@ -325,6 +325,20 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
     });
   }, []);
 
+  const toggleOutputsCollapsed = useCallback((cellId: string) => {
+    setNotebook(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        cells: prev.cells.map(c => {
+          if (c.id !== cellId) return c;
+          const meta = (c.metadata || {}) as Record<string, unknown>;
+          return { ...c, metadata: { ...meta, collapsed: !meta.collapsed } };
+        }),
+      };
+    });
+  }, []);
+
   const focusActiveCellEditor = useCallback((cellId: string) => {
     const root = notebookRef.current;
     if (!root) return;
@@ -445,6 +459,7 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
             onMoveDown={() => moveCell(cell.id, 1)}
             onInsertBelow={(type) => insertCell(cell.id, type)}
             onChangeType={(type) => changeCellType(cell.id, type)}
+            onToggleOutputs={() => toggleOutputsCollapsed(cell.id)}
             completionSource={completionSource}
           />
         ))}
@@ -472,11 +487,13 @@ interface CellViewProps {
   onMoveDown: () => void;
   onInsertBelow: (type: CellType) => void;
   onChangeType: (type: CellType) => void;
+  onToggleOutputs: () => void;
   completionSource?: ExternalCompletionSource;
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, active, running, kernelIdle, fontSize, onFocus, onChange, onRun, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, completionSource } = props;
+  const { cell, active, running, kernelIdle, fontSize, onFocus, onChange, onRun, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, completionSource } = props;
+  const outputsCollapsed = !!(cell.metadata as Record<string, unknown> | undefined)?.collapsed;
   const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
   const executionMark = cell.cell_type === 'code'
@@ -547,9 +564,23 @@ function CellView(props: CellViewProps) {
               </div>
             )}
             {cell.cell_type === 'code' && cell.outputs.length > 0 && (
-              <div className={styles.outputs}>
-                {cell.outputs.map((out, i) => <OutputView key={i} output={out} />)}
-              </div>
+              <>
+                <div
+                  className={styles.outputsHeader}
+                  onClick={(e) => { e.stopPropagation(); onToggleOutputs(); }}
+                  title={outputsCollapsed ? 'Expand output' : 'Collapse output'}
+                >
+                  <span className={`${styles.outputsChevron} ${outputsCollapsed ? styles.outputsChevronCollapsed : ''}`}>▼</span>
+                  <span className={styles.outputsCount}>
+                    {cell.outputs.length} output{cell.outputs.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {!outputsCollapsed && (
+                  <div className={styles.outputs}>
+                    {cell.outputs.map((out, i) => <OutputView key={i} output={out} />)}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
