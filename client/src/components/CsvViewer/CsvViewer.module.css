@@ -1,0 +1,64 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.meta {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  flex-shrink: 0;
+}
+
+.tableWrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+  color: var(--color-text);
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table th {
+  background: var(--color-bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+}
+
+.table tbody tr:nth-child(even) {
+  background: var(--color-bg-secondary);
+}
+
+.rowNum {
+  color: var(--color-text-secondary);
+  text-align: right !important;
+  user-select: none;
+  background: var(--color-bg-secondary) !important;
+}
+
+.message {
+  padding: 12px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}

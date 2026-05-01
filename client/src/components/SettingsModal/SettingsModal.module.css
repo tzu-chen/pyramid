@@ -14,8 +14,8 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   width: 100%;
-  max-width: 480px;
-  max-height: 80vh;
+  max-width: 640px;
+  max-height: 85vh;
   overflow-y: auto;
 }
 
@@ -45,6 +45,9 @@
 
 .body {
   padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 
 .section {
@@ -56,6 +59,219 @@
 .sectionTitle {
   font-size: var(--font-size-base);
   font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.rowInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rowDesc {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  background: var(--color-border);
+  border: none;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggleOn {
+  background: var(--color-primary);
+}
+
+.toggleThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.toggleOn .toggleThumb {
+  transform: translateX(18px);
+}
+
+.fontSizeControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.fontSizeBtn {
+  padding: 2px var(--space-2);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.fontSizeBtn:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.fontSizeBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fontSizeValue {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+  min-width: 32px;
+  text-align: center;
+}
+
+.fontSizeReset {
+  padding: 2px var(--space-2);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.fontSizeReset:hover {
+  color: var(--color-text-secondary);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.card:hover {
+  border-color: var(--color-primary);
+}
+
+.cardActive {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.cardActive:hover {
+  border-color: var(--color-primary);
+}
+
+.preview {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.swatchBg {
+  width: 100%;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.swatchBar {
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.swatchBody {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+}
+
+.swatchCard {
+  flex: 1;
+  height: 100%;
+  border-radius: 2px;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+}
+
+.swatchText {
+  height: 3px;
+  border-radius: 1px;
+  width: 80%;
+}
+
+.swatchTextShort {
+  width: 50%;
+}
+
+.swatchAccent {
+  width: 8px;
+  height: 24px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.cardName {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.cardType {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .keyStatus {
@@ -135,4 +351,10 @@
 .testError {
   font-size: var(--font-size-sm);
   color: var(--color-danger);
+}
+
+@media (max-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }

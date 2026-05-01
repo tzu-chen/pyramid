@@ -16,6 +16,7 @@ import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
+import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
@@ -298,6 +299,9 @@ function SessionPage() {
 
   const latestRun = runs[0];
 
+  const activeFile = activeFileId ? session.files.find(f => f.id === activeFileId) : null;
+  const activeFileExt = activeFile?.filename.split('.').pop()?.toLowerCase() ?? '';
+
   // Lake status badge variant
   const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
     : lakeStatus === 'error' ? 'danger'
@@ -383,7 +387,19 @@ function SessionPage() {
                 </button>
               )}
               <div className={styles.editorContainer}>
-                <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+                {activeFileExt === 'ipynb' ? (
+                  <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+                ) : activeFileExt === 'csv' ? (
+                  <CsvViewer sessionId={id!} fileId={activeFileId} />
+                ) : (
+                  <CodeEditor
+                    value={fileContent}
+                    language={activeFile?.language || ''}
+                    onChange={handleSaveFile}
+                    fontSize={fontSize}
+                    onInsertRef={insertRef}
+                  />
+                )}
               </div>
             </div>
           ) : isLean ? (

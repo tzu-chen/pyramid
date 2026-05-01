@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { settingsService } from '../../services/claudeService';
 import { claudeService } from '../../services/claudeService';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
+import { editorStorage } from '../../services/editorStorage';
+import { COLOR_SCHEMES } from '../../colorSchemes';
 import styles from './SettingsModal.module.css';
 
 interface SettingsModalProps {
@@ -8,12 +12,17 @@ interface SettingsModalProps {
 }
 
 function SettingsModal({ onClose }: SettingsModalProps) {
+  const { schemeId, setScheme, autoSwitch, setAutoSwitch } = useTheme();
+  const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
+
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
+
+  const overlayMouseDownRef = useRef(false);
 
   useEffect(() => {
     settingsService.get('claude_api_key').then(setting => {
@@ -42,14 +51,11 @@ function SettingsModal({ onClose }: SettingsModalProps) {
     setTestResult(null);
     setTestError('');
     try {
-      // Make a minimal API call to verify the key works
-      // We use a dummy session ID — the route will check the key before the session
       await claudeService.ask('test', 'Say "ok"', [], 'general');
       setTestResult('success');
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes('Session not found')) {
-        // Key is valid — the request failed because the session doesn't exist, not the key
         setTestResult('success');
       } else {
         setTestResult('error');
@@ -60,12 +66,19 @@ function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
-  };
-
   return (
-    <div className={styles.overlay} onClick={handleBackdropClick}>
+    <div
+      className={styles.overlay}
+      onMouseDown={e => {
+        overlayMouseDownRef.current = e.target === e.currentTarget;
+      }}
+      onClick={e => {
+        if (overlayMouseDownRef.current && e.target === e.currentTarget) {
+          onClose();
+        }
+        overlayMouseDownRef.current = false;
+      }}
+    >
       <div className={styles.modal}>
         <div className={styles.header}>
           <h2 className={styles.title}>Settings</h2>
@@ -73,7 +86,101 @@ function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div className={styles.body}>
-          <div className={styles.section}>
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Appearance</h3>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Auto switch</span>
+                <span className={styles.rowDesc}>Light theme by day, dark by night</span>
+              </div>
+              <button
+                className={`${styles.toggle} ${autoSwitch.enabled ? styles.toggleOn : ''}`}
+                onClick={() => setAutoSwitch({ ...autoSwitch, enabled: !autoSwitch.enabled })}
+                role="switch"
+                aria-checked={autoSwitch.enabled}
+                aria-label="Auto theme switching"
+              >
+                <span className={styles.toggleThumb} />
+              </button>
+            </div>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Editor font size</span>
+              </div>
+              <div className={styles.fontSizeControls}>
+                <button
+                  className={styles.fontSizeBtn}
+                  onClick={fontDecrease}
+                  disabled={fontSize <= editorStorage.MIN_FONT_SIZE}
+                >
+                  A−
+                </button>
+                <span className={styles.fontSizeValue}>{fontSize}px</span>
+                <button
+                  className={styles.fontSizeBtn}
+                  onClick={fontIncrease}
+                  disabled={fontSize >= editorStorage.MAX_FONT_SIZE}
+                >
+                  A+
+                </button>
+                {fontSize !== editorStorage.DEFAULT_FONT_SIZE && (
+                  <button className={styles.fontSizeReset} onClick={fontReset}>
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className={styles.grid}>
+              {COLOR_SCHEMES.map(scheme => (
+                <button
+                  key={scheme.id}
+                  className={`${styles.card} ${scheme.id === schemeId ? styles.cardActive : ''}`}
+                  onClick={() => setScheme(scheme.id)}
+                >
+                  <div className={styles.preview}>
+                    <div
+                      className={styles.swatchBg}
+                      style={{ background: scheme.colors['color-bg'] }}
+                    >
+                      <div
+                        className={styles.swatchBar}
+                        style={{
+                          background: scheme.colors['color-surface'],
+                          borderBottom: `2px solid ${scheme.colors['color-border']}`,
+                        }}
+                      />
+                      <div className={styles.swatchBody}>
+                        <div
+                          className={styles.swatchCard}
+                          style={{
+                            background: scheme.colors['color-surface'],
+                            border: `1px solid ${scheme.colors['color-border']}`,
+                          }}
+                        >
+                          <div
+                            className={styles.swatchText}
+                            style={{ background: scheme.colors['color-text'] }}
+                          />
+                          <div
+                            className={`${styles.swatchText} ${styles.swatchTextShort}`}
+                            style={{ background: scheme.colors['color-text-secondary'] }}
+                          />
+                        </div>
+                        <div
+                          className={styles.swatchAccent}
+                          style={{ background: scheme.colors['color-primary'] }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <span className={styles.cardName}>{scheme.name}</span>
+                  <span className={styles.cardType}>{scheme.type}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Claude API Key</h3>
             <div className={styles.keyStatus}>
               Status: {hasKey ? (
@@ -108,7 +215,7 @@ function SettingsModal({ onClose }: SettingsModalProps) {
             {testResult === 'error' && (
               <div className={styles.testError}>{testError}</div>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </div>

@@ -65,6 +65,7 @@
 
   /* Sidebar */
   --sidebar-width: 220px;
+  --sidebar-width-collapsed: 56px;
 
   /* Transitions */
   --transition-fast: 150ms ease;
