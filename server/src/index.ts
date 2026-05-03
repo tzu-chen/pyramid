@@ -16,6 +16,7 @@ import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
 import { leanLsp } from './services/lean-lsp.js';
 import { notebookKernel } from './services/notebook-kernel.js';
+import { terminal } from './services/terminal.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3007', 10);
@@ -84,6 +85,21 @@ server.on('upgrade', (request, socket, head) => {
     return;
   }
 
+  // Match /ws/terminal/:sessionId/:tabId
+  const termMatch = pathname?.match(/^\/ws\/terminal\/([a-f0-9-]+)\/([a-zA-Z0-9_-]{1,64})$/);
+  if (termMatch) {
+    const sessionId = termMatch[1];
+    const tabId = termMatch[2];
+    const session = db.prepare('SELECT session_type, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'freeform') { socket.destroy(); return; }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = path.join(__dirname, '..', session.working_dir);
+      terminal.handleWebSocket(ws, sessionId, tabId, cwd);
+    });
+    return;
+  }
+
   socket.destroy();
 });
 
@@ -91,6 +107,7 @@ server.on('upgrade', (request, socket, head) => {
 function shutdown() {
   leanLsp.forceStopAll();
   notebookKernel.forceStopAll();
+  terminal.forceStopAll();
   server.close(() => {
     process.exit(0);
   });

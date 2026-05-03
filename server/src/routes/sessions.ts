@@ -6,6 +6,7 @@ import db from '../db.js';
 import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
+import { terminal } from '../services/terminal.js';
 
 const router = Router();
 
@@ -227,6 +228,9 @@ router.delete('/:id', (req: Request, res: Response) => {
     }
     if (session.session_type === 'notebook') {
       notebookKernel.stopKernel(req.params.id as string);
+    }
+    if (session.session_type === 'freeform') {
+      terminal.killSession(req.params.id as string);
     }
 
     // Delete working directory

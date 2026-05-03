@@ -5,6 +5,7 @@ interface UseResizablePanelOptions {
   defaultRatio: number;
   minRatio: number;
   maxRatio: number;
+  axis?: 'x' | 'y';
 }
 
 export function useResizablePanel({
@@ -12,6 +13,7 @@ export function useResizablePanel({
   defaultRatio,
   minRatio,
   maxRatio,
+  axis = 'x',
 }: UseResizablePanelOptions) {
   const [ratio, setRatio] = useState<number>(() => {
     try {
@@ -32,20 +34,25 @@ export function useResizablePanel({
   const onDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     draggingRef.current = true;
-    document.body.style.cursor = 'col-resize';
+    const cursor = axis === 'y' ? 'row-resize' : 'col-resize';
+    document.body.style.cursor = cursor;
     document.body.style.userSelect = 'none';
 
-    const getClientX = (ev: MouseEvent | TouchEvent): number => {
-      if ('touches' in ev) return ev.touches[0].clientX;
-      return ev.clientX;
+    const getClient = (ev: MouseEvent | TouchEvent): number => {
+      if ('touches' in ev) {
+        return axis === 'y' ? ev.touches[0].clientY : ev.touches[0].clientX;
+      }
+      return axis === 'y' ? ev.clientY : ev.clientX;
     };
 
     const onMove = (ev: MouseEvent | TouchEvent) => {
       if (!draggingRef.current || !containerRef.current) return;
       ev.preventDefault();
       const rect = containerRef.current.getBoundingClientRect();
-      const x = getClientX(ev) - rect.left;
-      const newRatio = Math.min(maxRatio, Math.max(minRatio, x / rect.width));
+      const offset = getClient(ev) - (axis === 'y' ? rect.top : rect.left);
+      const total = axis === 'y' ? rect.height : rect.width;
+      if (total <= 0) return;
+      const newRatio = Math.min(maxRatio, Math.max(minRatio, offset / total));
       setRatio(newRatio);
     };
 
@@ -69,7 +76,7 @@ export function useResizablePanel({
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
-  }, [storageKey, minRatio, maxRatio]);
+  }, [storageKey, minRatio, maxRatio, axis]);
 
   // Cleanup on unmount in case drag is in progress
   useEffect(() => {

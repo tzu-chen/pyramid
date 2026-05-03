@@ -17,6 +17,7 @@ import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
+import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
@@ -61,6 +62,19 @@ function SessionPage() {
     maxRatio: 0.8,
   });
 
+  // Vertical split inside the right pane (freeform only): tabs/output on top, terminal on bottom
+  const {
+    ratio: rightVRatio,
+    onDragStart: onRightVDragStart,
+    containerRef: rightVContainerRef,
+  } = useResizablePanel({
+    storageKey: 'pyramid_terminal_height_ratio',
+    defaultRatio: 0.65,
+    minRatio: 0.25,
+    maxRatio: 0.85,
+    axis: 'y',
+  });
+
   // Lean-specific state
   const [building, setBuilding] = useState(false);
   const [lakeStatus, setLakeStatus] = useState<LakeStatus>('initializing');
@@ -68,6 +82,7 @@ function SessionPage() {
 
   const isLean = session?.session_type === 'lean';
   const isNotebook = session?.session_type === 'notebook';
+  const isFreeform = session?.session_type === 'freeform';
 
   // Lean LSP hook
   const leanProjectPath = session?.lean_meta?.absolute_project_path ?? null;
@@ -460,7 +475,15 @@ function SessionPage() {
           onMouseDown={onDragStart}
           onTouchStart={onDragStart}
         />
-        <div className={styles.rightPane} style={{ flexBasis: `${(1 - ratio) * 100}%`, '--panel-font-size': `${fontSize}px` } as React.CSSProperties}>
+        <div
+          className={styles.rightPane}
+          ref={isFreeform ? rightVContainerRef : undefined}
+          style={{ flexBasis: `${(1 - ratio) * 100}%`, '--panel-font-size': `${fontSize}px` } as React.CSSProperties}
+        >
+          <div
+            className={styles.rightPaneTop}
+            style={isFreeform ? { flexBasis: `${rightVRatio * 100}%`, flexGrow: 0, flexShrink: 0 } : undefined}
+          >
           <div className={styles.tabs}>
             {isLean ? (
               <>
@@ -739,6 +762,22 @@ function SessionPage() {
             )}
 
           </div>
+          </div>
+          {isFreeform && (
+            <>
+              <div
+                className={styles.verticalDivider}
+                onMouseDown={onRightVDragStart}
+                onTouchStart={onRightVDragStart}
+              />
+              <div
+                className={styles.terminalSection}
+                style={{ flexBasis: `${(1 - rightVRatio) * 100}%` }}
+              >
+                <TerminalPane sessionId={id!} visible={true} />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

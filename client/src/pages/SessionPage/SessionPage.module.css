@@ -208,6 +208,39 @@
   min-width: 0;
 }
 
+.rightPaneTop {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.verticalDivider {
+  height: 5px;
+  cursor: row-resize;
+  background-color: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  border-top: 1px solid var(--color-border);
+  touch-action: none;
+}
+
+.verticalDivider:hover,
+.verticalDivider:active {
+  background-color: var(--color-primary);
+  opacity: 0.3;
+}
+
+.terminalSection {
+  flex-grow: 0;
+  flex-shrink: 0;
+  min-height: 80px;
+  overflow: hidden;
+  border-top: 1px solid var(--color-border-light);
+}
+
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--color-border);
