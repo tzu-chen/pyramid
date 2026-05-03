@@ -79,6 +79,29 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS builds (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    flavor TEXT NOT NULL,
+    success INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    diagnostic_count INTEGER NOT NULL DEFAULT 0,
+    log TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS build_diagnostics (
+    id TEXT PRIMARY KEY,
+    build_id TEXT NOT NULL,
+    file TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    col INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
+  );
 `);
 
 // Create indices
@@ -90,7 +113,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_runs_session ON execution_runs(session_id);
   CREATE INDEX IF NOT EXISTS idx_runs_created ON execution_runs(created_at);
   CREATE INDEX IF NOT EXISTS idx_lean_meta_session ON lean_session_meta(session_id);
+  CREATE INDEX IF NOT EXISTS idx_builds_session ON builds(session_id);
+  CREATE INDEX IF NOT EXISTS idx_builds_created ON builds(created_at);
+  CREATE INDEX IF NOT EXISTS idx_build_diagnostics_build ON build_diagnostics(build_id);
 `);
+
+// Migration: add build_id column to execution_runs (nullable, no FK to keep migrations
+// simple — orphan build references are tolerable since builds rows are session-scoped).
+{
+  const cols = db.prepare(`PRAGMA table_info(execution_runs)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'build_id')) {
+    db.exec(`ALTER TABLE execution_runs ADD COLUMN build_id TEXT`);
+  }
+  if (!cols.some((c) => c.name === 'binary_path')) {
+    db.exec(`ALTER TABLE execution_runs ADD COLUMN binary_path TEXT`);
+  }
+  if (!cols.some((c) => c.name === 'flavor')) {
+    db.exec(`ALTER TABLE execution_runs ADD COLUMN flavor TEXT`);
+  }
+}
 
 // FTS5 virtual table for sessions search
 db.exec(`

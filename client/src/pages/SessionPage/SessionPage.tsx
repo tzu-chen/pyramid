@@ -19,13 +19,25 @@ import FileTree from '../../components/FileTree/FileTree';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
+import BuildPanel from '../../components/BuildPanel/BuildPanel';
+import {
+  cppBuildService,
+  FLAVOR_PRESETS,
+  flavorFromId,
+  type BuildFlavor,
+  type BuildResponse,
+  type CompilerDiagnostic,
+} from '../../services/cppBuildService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
+
+const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
+const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -94,6 +106,23 @@ function SessionPage() {
   const cppProjectPath = isFreeformCpp ? (session?.absolute_working_dir ?? null) : null;
   const cppLsp = useCppLsp(id, isFreeformCpp, cppProjectPath);
 
+  // CMake-specific state (only relevant for freeform C++ sessions whose dir
+  // contains a CMakeLists.txt — populated lazily after session load).
+  const [isCmakeProject, setIsCmakeProject] = useState(false);
+  const [cmakeFlavorId, setCmakeFlavorId] = useState<string>(() => {
+    return localStorage.getItem(CMAKE_FLAVOR_KEY) || 'Debug';
+  });
+  const [cmakeTarget, setCmakeTarget] = useState<string>(() => {
+    return localStorage.getItem(CMAKE_TARGET_KEY) || '';
+  });
+  const [cmakeTargets, setCmakeTargets] = useState<string[]>([]);
+  const [cmakeBuilding, setCmakeBuilding] = useState(false);
+  const [cmakeLastBuild, setCmakeLastBuild] = useState<BuildResponse | null>(null);
+  const [cmakeBuildError, setCmakeBuildError] = useState<string | null>(null);
+  const [cmakeHistoryRefresh, setCmakeHistoryRefresh] = useState(0);
+  const onJumpRef = useRef<((line: number, column: number) => void) | null>(null);
+  const pendingJumpRef = useRef<{ line: number; column: number } | null>(null);
+
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
   const fileUriRef = useRef<string | null>(null);
@@ -142,6 +171,13 @@ function SessionPage() {
     if (id && activeFileId) {
       fileService.getContent(id, activeFileId).then((content) => {
         setFileContent(content);
+        // If a diagnostic click switched files, fire the pending jump after the
+        // editor remounts and ingests the new content.
+        const pending = pendingJumpRef.current;
+        if (pending) {
+          pendingJumpRef.current = null;
+          requestAnimationFrame(() => onJumpRef.current?.(pending.line, pending.column));
+        }
       }).catch(() => {});
     }
   }, [id, activeFileId]);
@@ -229,19 +265,130 @@ function SessionPage() {
     }
   }, [isLean]);
 
+  // Detect CMake project on session load. Re-runs whenever the session's file
+  // list changes — adding/removing CMakeLists.txt should toggle the UI.
+  useEffect(() => {
+    if (!id || !isFreeformCpp) {
+      setIsCmakeProject(false);
+      setCmakeTargets([]);
+      return;
+    }
+    cppBuildService.status(id)
+      .then((s) => setIsCmakeProject(s.is_cmake_project))
+      .catch(() => setIsCmakeProject(false));
+  }, [id, isFreeformCpp, session?.files]);
+
+  // Persist flavor + target choices.
+  useEffect(() => { localStorage.setItem(CMAKE_FLAVOR_KEY, cmakeFlavorId); }, [cmakeFlavorId]);
+  useEffect(() => {
+    if (cmakeTarget) localStorage.setItem(CMAKE_TARGET_KEY, cmakeTarget);
+    else localStorage.removeItem(CMAKE_TARGET_KEY);
+  }, [cmakeTarget]);
+
+  const refreshCmakeTargets = useCallback(async (flavor: BuildFlavor) => {
+    if (!id || !isCmakeProject) return;
+    try {
+      const { binaries } = await cppBuildService.binaries(id, flavor);
+      setCmakeTargets(binaries.map(b => b.name));
+    } catch {
+      setCmakeTargets([]);
+    }
+  }, [id, isCmakeProject]);
+
+  // Refresh target list when flavor changes or after a successful build.
+  useEffect(() => {
+    if (isCmakeProject) refreshCmakeTargets(flavorFromId(cmakeFlavorId));
+  }, [isCmakeProject, cmakeFlavorId, refreshCmakeTargets]);
+
+  const applyBuildResponse = useCallback((resp: BuildResponse) => {
+    setCmakeLastBuild(resp);
+    setCmakeHistoryRefresh(n => n + 1);
+    if (resp.binary_paths.length) {
+      const names = resp.binary_paths.map(p => p.split('/').pop() || p);
+      setCmakeTargets(names);
+      // Auto-select the only target if user hasn't picked one yet.
+      if (!cmakeTarget && names.length === 1) setCmakeTarget(names[0]);
+    }
+  }, [cmakeTarget]);
+
+  const handleCmakeBuild = useCallback(async () => {
+    if (!id || cmakeBuilding) return;
+    setCmakeBuilding(true);
+    setCmakeBuildError(null);
+    setActiveTab('build');
+    try {
+      const flavor = flavorFromId(cmakeFlavorId);
+      const resp = await cppBuildService.build(id, flavor, cmakeTarget ? { target: cmakeTarget } : undefined);
+      applyBuildResponse(resp);
+    } catch (err) {
+      setCmakeBuildError((err as Error).message);
+    } finally {
+      setCmakeBuilding(false);
+    }
+  }, [id, cmakeBuilding, cmakeFlavorId, cmakeTarget, applyBuildResponse]);
+
   const handleExecute = async () => {
     if (!id || executing) return;
     setExecuting(true);
     try {
-      const run = await executionService.execute(id, activeFileId ? { file_id: activeFileId } : undefined);
-      setRuns(prev => [run, ...prev]);
-      setActiveTab('output');
+      if (isCmakeProject) {
+        const flavor = flavorFromId(cmakeFlavorId);
+        const result = await executionService.execute(id, {
+          file_id: activeFileId ?? undefined,
+          flavor,
+          target: cmakeTarget || undefined,
+        });
+        if (result.kind === 'ran') {
+          applyBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: true,
+            duration_ms: result.build_duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.build_log,
+            binary_paths: [result.binary_path],
+          });
+          setRuns(prev => [result.run, ...prev]);
+          setActiveTab('output');
+        } else if (result.kind === 'build_failed' || result.kind === 'no_binary') {
+          applyBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: false,
+            duration_ms: result.duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.log,
+            binary_paths: [],
+          });
+          setActiveTab('build');
+        }
+      } else {
+        const run = await executionService.execute(id, activeFileId ? { file_id: activeFileId } : undefined);
+        // Single-file path returns a bare ExecutionRun (kind=undefined).
+        if ((run as ExecutionRun).id) {
+          setRuns(prev => [run as ExecutionRun, ...prev]);
+        }
+        setActiveTab('output');
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setExecuting(false);
     }
   };
+
+  const handleDiagnosticClick = useCallback((d: CompilerDiagnostic) => {
+    if (!session?.files) return;
+    const target = session.files.find(f => f.filename === d.file)
+      ?? session.files.find(f => f.filename.endsWith('/' + d.file))
+      ?? session.files.find(f => d.file.endsWith('/' + f.filename));
+    if (target && target.id !== activeFileId) {
+      pendingJumpRef.current = { line: d.line, column: d.column };
+      setActiveFileId(target.id);
+    } else {
+      onJumpRef.current?.(d.line, d.column);
+    }
+  }, [session?.files, activeFileId]);
 
   const handleBuild = async () => {
     if (!id || building) return;
@@ -400,6 +547,9 @@ function SessionPage() {
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />
           )}
+          {isCmakeProject && (
+            <Badge label={`cmake: ${cmakeFlavorId}`} variant="default" />
+          )}
         </div>
         <div className={styles.toolbarRight}>
           <select
@@ -423,10 +573,42 @@ function SessionPage() {
             </>
           ) : isNotebook ? null : (
             <>
+              {isCmakeProject && (
+                <>
+                  <select
+                    className={styles.flavorSelect}
+                    value={cmakeFlavorId}
+                    onChange={e => setCmakeFlavorId(e.target.value)}
+                    title="Build flavor"
+                  >
+                    {FLAVOR_PRESETS.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className={styles.flavorSelect}
+                    value={cmakeTarget}
+                    onChange={e => setCmakeTarget(e.target.value)}
+                    title="Run target"
+                  >
+                    <option value="">(auto)</option>
+                    {cmakeTargets.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleCmakeBuild}
+                    disabled={cmakeBuilding}
+                  >
+                    {cmakeBuilding ? 'Building...' : 'Build'}
+                  </button>
+                </>
+              )}
               <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
-                {executing ? 'Running...' : 'Run'}
+                {executing ? (isCmakeProject ? 'Building/Running...' : 'Running...') : 'Run'}
               </button>
-              {latestRun && (latestRun.exit_code !== 0 || latestRun.stderr) && (
+              {((cmakeLastBuild && !cmakeLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
                 <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
               )}
             </>
@@ -534,6 +716,7 @@ function SessionPage() {
                   externalHover={isFreeformCpp ? cppExternalHover : undefined}
                   fontSize={fontSize}
                   onInsertRef={insertRef}
+                  onJumpRef={onJumpRef}
                 />
               </div>
             </div>
@@ -596,6 +779,17 @@ function SessionPage() {
                     onClick={() => setActiveTab('output')}
                   >
                     Output
+                  </button>
+                )}
+                {isCmakeProject && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'build' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('build')}
+                  >
+                    Build
+                    {cmakeLastBuild && !cmakeLastBuild.success && (
+                      <span className={styles.tabBadge}>!</span>
+                    )}
                   </button>
                 )}
                 <button
@@ -749,6 +943,21 @@ function SessionPage() {
                 {(!session.links || session.links.length === 0) && !linkAddMode && (
                   <div className={styles.placeholder}>No cross-app links</div>
                 )}
+              </div>
+            )}
+
+            {/* CMake: Build panel */}
+            {activeTab === 'build' && isCmakeProject && (
+              <div className={styles.buildTabPane}>
+                {cmakeBuildError && (
+                  <div className={styles.buildError}>{cmakeBuildError}</div>
+                )}
+                <BuildPanel
+                  sessionId={id!}
+                  latest={cmakeLastBuild}
+                  refreshKey={cmakeHistoryRefresh}
+                  onDiagnosticClick={handleDiagnosticClick}
+                />
               </div>
             )}
 

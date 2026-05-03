@@ -208,6 +208,7 @@ interface CodeEditorProps {
   readOnly?: boolean;
   fontSize?: number;
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
+  onJumpRef?: MutableRefObject<((line: number, column: number) => void) | null>;
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
 }
@@ -245,7 +246,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, externalCompletion, externalHover }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, externalCompletion, externalHover }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -400,6 +401,30 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       if (onInsertRef) onInsertRef.current = null;
     };
   }, [onInsertRef, createEditor]);
+
+  // Expose a jump-to function so external panels (e.g. build diagnostics) can
+  // navigate to a specific 1-indexed line/column.
+  useEffect(() => {
+    if (onJumpRef) {
+      onJumpRef.current = (line: number, column: number) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const doc = view.state.doc;
+        const lineNo = Math.max(1, Math.min(line, doc.lines));
+        const lineInfo = doc.line(lineNo);
+        const pos = lineInfo.from + Math.max(0, Math.min(column - 1, lineInfo.length));
+        view.dispatch({
+          selection: { anchor: pos, head: pos },
+          scrollIntoView: true,
+          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        });
+        view.focus();
+      };
+    }
+    return () => {
+      if (onJumpRef) onJumpRef.current = null;
+    };
+  }, [onJumpRef, createEditor]);
 
   // Update diagnostics without recreating the editor
   useEffect(() => {

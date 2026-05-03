@@ -16,14 +16,21 @@ interface ExecutionResult {
   command: string;
 }
 
+// Escape an arbitrary string for use as a single-quoted POSIX shell argument.
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 function getCommand(filename: string, language: string): { cmd: string; args: string[]; shell: boolean } {
   switch (language) {
     case 'python':
       return { cmd: 'python3', args: [filename], shell: false };
     case 'julia':
       return { cmd: 'julia', args: [filename], shell: false };
-    case 'cpp':
-      return { cmd: 'sh', args: ['-c', `g++ -O2 -std=c++17 -o a.out ${filename} && ./a.out`], shell: false };
+    case 'cpp': {
+      const q = shellQuote(filename);
+      return { cmd: 'sh', args: ['-c', `g++ -O2 -std=c++20 -Wall -Wextra -o a.out ${q} && ./a.out`], shell: false };
+    }
     case 'lean':
       return { cmd: 'lake', args: ['env', 'lean', filename], shell: false };
     default:
@@ -35,7 +42,7 @@ function getCommandString(filename: string, language: string): string {
   switch (language) {
     case 'python': return `python3 ${filename}`;
     case 'julia': return `julia ${filename}`;
-    case 'cpp': return `g++ -O2 -std=c++17 -o a.out ${filename} && ./a.out`;
+    case 'cpp': return `g++ -O2 -std=c++20 -Wall -Wextra -o a.out ${filename} && ./a.out`;
     case 'lean': return `lake env lean ${filename}`;
     default: return `python3 ${filename}`;
   }

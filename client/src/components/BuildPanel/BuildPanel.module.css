@@ -1,0 +1,260 @@
+.root {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.placeholder,
+.placeholderSmall {
+  color: var(--color-text-tertiary);
+  font-size: inherit;
+}
+
+.placeholder {
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  padding: var(--space-2) 0;
+}
+
+.latest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.statusPill {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statusOk {
+  background-color: var(--color-success);
+  color: white;
+}
+
+.statusFail {
+  background-color: var(--color-danger);
+  color: white;
+}
+
+.flavorTag {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.duration,
+.diagCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.sectionLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-2);
+}
+
+/* Diagnostics list */
+.diagList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.diagItem {
+  margin: 0;
+}
+
+.diagButton {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-1) var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-secondary);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.diagButton:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.diagLoc {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  grid-column: 1;
+}
+
+.diagSev {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  grid-column: 2;
+  align-self: start;
+}
+
+.diagError .diagSev { color: var(--color-danger); }
+.diagWarning .diagSev { color: var(--color-warning, #c89028); }
+.diagNote .diagSev { color: var(--color-text-tertiary); }
+
+.diagError {
+  border-left: 3px solid var(--color-danger);
+}
+.diagWarning {
+  border-left: 3px solid var(--color-warning, #c89028);
+}
+.diagNote {
+  border-left: 3px solid var(--color-border);
+}
+
+.diagMessage {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+}
+
+/* Binaries */
+.binariesRow {
+  display: flex;
+  flex-direction: column;
+}
+
+.binList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.binItem {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+/* Log */
+.logSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.logToggle {
+  align-self: flex-start;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.logToggle:hover {
+  color: var(--color-text);
+}
+
+.logContent {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* History */
+.historySection {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--space-3);
+}
+
+.historyList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+}
+
+.historyStatus {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.historyFlavor {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+}
+
+.historyMeta {
+  color: var(--color-text-tertiary);
+}
+
+.historyTime {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+}
