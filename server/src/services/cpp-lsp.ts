@@ -3,13 +3,20 @@ import { LspBridge } from './lsp-bridge.js';
 
 const bridge = new LspBridge();
 
-export const leanLsp = {
+export const cppLsp = {
   handleWebSocket(ws: WebSocket, sessionId: string, projectPath: string): void {
     bridge.handleWebSocket(ws, sessionId, {
-      command: 'lean',
-      args: ['--server'],
+      command: 'clangd',
+      args: [
+        '--background-index',         // index whole project in background
+        '--clang-tidy',               // inline clang-tidy hints
+        '--header-insertion=never',   // we manage includes manually
+        '--completion-style=detailed',
+        '--pch-storage=memory',       // faster, more RAM
+        '--log=error',                // quiet stderr
+      ],
       cwd: projectPath,
-      logPrefix: `lean-lsp:${sessionId.slice(0, 8)}`,
+      logPrefix: `cpp-lsp:${sessionId.slice(0, 8)}`,
     });
   },
 

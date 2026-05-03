@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useLeanLsp } from '../../hooks/useLeanLsp';
+import { useCppLsp } from '../../hooks/useCppLsp';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
@@ -88,6 +89,11 @@ function SessionPage() {
   const leanProjectPath = session?.lean_meta?.absolute_project_path ?? null;
   const lsp = useLeanLsp(id, isLean, leanProjectPath);
 
+  // C++ LSP hook (clangd) — only enabled for freeform C++ sessions
+  const isFreeformCpp = isFreeform && session?.language === 'cpp';
+  const cppProjectPath = isFreeformCpp ? (session?.absolute_working_dir ?? null) : null;
+  const cppLsp = useCppLsp(id, isFreeformCpp, cppProjectPath);
+
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
   const fileUriRef = useRef<string | null>(null);
@@ -98,6 +104,9 @@ function SessionPage() {
     if (!session) return '';
     if (session.session_type === 'lean' && session.lean_meta?.absolute_project_path) {
       return `file://${session.lean_meta.absolute_project_path}/${filename}`;
+    }
+    if (session.absolute_working_dir) {
+      return `file://${session.absolute_working_dir}/${filename}`;
     }
     return `file://${session.working_dir.startsWith('/') ? '' : '/'}${session.working_dir}/${filename}`;
   }, [session]);
@@ -140,7 +149,7 @@ function SessionPage() {
   // Reset LSP opened-file tracking on file switch or reconnection
   useEffect(() => {
     lspOpenedFileRef.current = null;
-  }, [activeFileId, lsp.initialized]);
+  }, [activeFileId, lsp.initialized, cppLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
   useEffect(() => {
@@ -154,6 +163,22 @@ function SessionPage() {
       lspOpenedFileRef.current = uri;
     }
   }, [isLean, lsp.initialized, fileContent, activeFileId, session?.files, getFileUri, lsp.sendDidOpen]);
+
+  // Same flow for clangd (freeform C++)
+  useEffect(() => {
+    if (!isFreeformCpp || !cppLsp.initialized || !session?.files || !activeFileId) return;
+    const file = session.files.find(f => f.id === activeFileId);
+    if (!file) return;
+    // Only open .cpp/.cc/.cxx/.h/.hpp files
+    const ext = file.filename.split('.').pop()?.toLowerCase() ?? '';
+    if (!['cpp', 'cc', 'cxx', 'c', 'h', 'hpp', 'hh', 'hxx'].includes(ext)) return;
+    const uri = getFileUri(file.filename);
+    fileUriRef.current = uri;
+    if (lspOpenedFileRef.current !== uri) {
+      cppLsp.sendDidOpen(uri, fileContent);
+      lspOpenedFileRef.current = uri;
+    }
+  }, [isFreeformCpp, cppLsp.initialized, fileContent, activeFileId, session?.files, getFileUri, cppLsp.sendDidOpen]);
 
   // Auto-save notes
   useEffect(() => {
@@ -181,6 +206,8 @@ function SessionPage() {
   // Use refs for LSP methods so callbacks stay stable
   const lspRef = useRef(lsp);
   lspRef.current = lsp;
+  const cppLspRef = useRef(cppLsp);
+  cppLspRef.current = cppLsp;
 
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
@@ -190,9 +217,11 @@ function SessionPage() {
       // Send didChange to LSP
       if (isLean && fileUriRef.current) {
         lspRef.current.sendDidChange(fileUriRef.current, content);
+      } else if (isFreeformCpp && fileUriRef.current) {
+        cppLspRef.current.sendDidChange(fileUriRef.current, content);
       }
     }
-  }, [id, activeFileId, isLean]);
+  }, [id, activeFileId, isLean, isFreeformCpp]);
 
   const handleCursorChange = useCallback((position: { line: number; character: number }) => {
     if (isLean && fileUriRef.current) {
@@ -244,9 +273,11 @@ function SessionPage() {
       fileService.updateContent(id, activeFileId, code).catch(() => {});
       if (isLean && fileUriRef.current) {
         lspRef.current.sendDidChange(fileUriRef.current, code);
+      } else if (isFreeformCpp && fileUriRef.current) {
+        cppLspRef.current.sendDidChange(fileUriRef.current, code);
       }
     }
-  }, [id, activeFileId, isLean, isNotebook]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isNotebook]);
 
   const updateLinks = async (newLinks: SessionLink[]) => {
     if (!id || !session) return;
@@ -307,6 +338,42 @@ function SessionPage() {
     await sessionService.updateStatus(id, status as 'active' | 'paused' | 'completed' | 'archived');
     refresh();
   };
+
+  // C++ LSP: completion + hover sources for the editor
+  const cppExternalCompletion = useCallback(async (code: string, cursorPos: number) => {
+    if (!isFreeformCpp || !fileUriRef.current) return null;
+    // Compute line/character from absolute cursor position
+    let line = 0;
+    let lineStart = 0;
+    for (let i = 0; i < cursorPos; i++) {
+      if (code.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+    }
+    const character = cursorPos - lineStart;
+    const items = await cppLspRef.current.requestCompletion(fileUriRef.current, line, character);
+    if (!items || items.length === 0) return null;
+    // Determine replacement range: word characters before cursor
+    let from = cursorPos;
+    while (from > 0) {
+      const c = code.charCodeAt(from - 1);
+      const isWord = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+      if (!isWord) break;
+      from--;
+    }
+    return {
+      from,
+      to: cursorPos,
+      matches: items.slice(0, 100).map((it) => ({
+        label: it.insertText || it.label,
+        type: 'variable',
+        detail: it.detail,
+      })),
+    };
+  }, [isFreeformCpp]);
+
+  const cppExternalHover = useCallback(async (line: number, character: number) => {
+    if (!isFreeformCpp || !fileUriRef.current) return null;
+    return await cppLspRef.current.requestHover(fileUriRef.current, line, character);
+  }, [isFreeformCpp]);
 
   if (loading) return <div className={styles.loading}>Loading...</div>;
   if (error) return <div className={styles.error}>Error: {error}</div>;
@@ -462,6 +529,9 @@ function SessionPage() {
                   value={fileContent}
                   language={session.language}
                   onChange={handleSaveFile}
+                  diagnostics={isFreeformCpp ? cppLsp.diagnostics : undefined}
+                  externalCompletion={isFreeformCpp ? cppExternalCompletion : undefined}
+                  externalHover={isFreeformCpp ? cppExternalHover : undefined}
                   fontSize={fontSize}
                   onInsertRef={insertRef}
                 />

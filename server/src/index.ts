@@ -15,6 +15,8 @@ import claudeRouter from './routes/claude.js';
 import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
 import { leanLsp } from './services/lean-lsp.js';
+import { cppLsp } from './services/cpp-lsp.js';
+import { cppProject } from './services/cpp-project.js';
 import { notebookKernel } from './services/notebook-kernel.js';
 import { terminal } from './services/terminal.js';
 
@@ -71,6 +73,25 @@ server.on('upgrade', (request, socket, head) => {
     return;
   }
 
+  // Match /ws/cpp/:sessionId
+  const cppMatch = pathname?.match(/^\/ws\/cpp\/([a-f0-9-]+)$/);
+  if (cppMatch) {
+    const sessionId = cppMatch[1];
+    const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'freeform' || session.language !== 'cpp') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = path.join(__dirname, '..', session.working_dir);
+      // Bootstrap .clangd for sessions created before this feature landed
+      cppProject.ensureClangdConfig(cwd);
+      cppLsp.handleWebSocket(ws, sessionId, cwd);
+    });
+    return;
+  }
+
   // Match /ws/notebook/:sessionId
   const nbMatch = pathname?.match(/^\/ws\/notebook\/([a-f0-9-]+)$/);
   if (nbMatch) {
@@ -106,6 +127,7 @@ server.on('upgrade', (request, socket, head) => {
 // Graceful shutdown
 function shutdown() {
   leanLsp.forceStopAll();
+  cppLsp.forceStopAll();
   notebookKernel.forceStopAll();
   terminal.forceStopAll();
   server.close(() => {

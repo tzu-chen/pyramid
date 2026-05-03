@@ -69,6 +69,7 @@ export interface SessionDetail extends Session {
   files: SessionFile[];
   runs: ExecutionRun[];
   lean_meta?: LeanSessionMeta;
+  absolute_working_dir?: string;
 }
 
 export interface StatsOverview {

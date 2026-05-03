@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback, MutableRefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Extension, Compartment, Prec } from '@codemirror/state';
-import { ViewPlugin, ViewUpdate, keymap } from '@codemirror/view';
+import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip } from '@codemirror/view';
 import { python, pythonLanguage, localCompletionSource, globalCompletion } from '@codemirror/lang-python';
-import { cpp } from '@codemirror/lang-cpp';
+import { cpp, cppLanguage } from '@codemirror/lang-cpp';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
 import { linter } from '@codemirror/lint';
 import { indentMore, indentLess } from '@codemirror/commands';
@@ -193,6 +193,12 @@ export interface ExternalCompletion {
 
 export type ExternalCompletionSource = (code: string, cursorPos: number) => Promise<ExternalCompletion | null>;
 
+export interface ExternalHoverResult {
+  contents: string;
+}
+
+export type ExternalHoverSource = (line: number, character: number) => Promise<ExternalHoverResult | null>;
+
 interface CodeEditorProps {
   value: string;
   language: string;
@@ -203,6 +209,7 @@ interface CodeEditorProps {
   fontSize?: number;
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
   externalCompletion?: ExternalCompletionSource;
+  externalHover?: ExternalHoverSource;
 }
 
 function pythonWithCompletion(): Extension {
@@ -238,7 +245,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, externalCompletion }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, externalCompletion, externalHover }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -251,6 +258,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   onCursorChangeRef.current = onCursorChange;
   const externalCompletionRef = useRef(externalCompletion);
   externalCompletionRef.current = externalCompletion;
+  const externalHoverRef = useRef(externalHover);
+  externalHoverRef.current = externalHover;
 
   const createEditor = useCallback(() => {
     if (!containerRef.current) return;
@@ -282,15 +291,18 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       extensions.push(unicodeInputExtension());
     }
 
-    if (language === 'python' || language === 'julia') {
+    if (language === 'python' || language === 'julia' || language === 'cpp') {
       const externalSource = async (ctx: CompletionContext): Promise<CMCompletionResult | null> => {
         const fn = externalCompletionRef.current;
         if (!fn) return null;
-        // Trigger on word char, '.', or explicit invocation.
+        // Trigger on word char, '.', or explicit invocation. C++ also triggers on '>' (->) and ':' (::).
         const before = ctx.state.sliceDoc(Math.max(0, ctx.pos - 1), ctx.pos);
+        const before2 = ctx.state.sliceDoc(Math.max(0, ctx.pos - 2), ctx.pos);
         const isWord = /\w/.test(before);
         const isDot = before === '.';
-        if (!ctx.explicit && !isWord && !isDot) return null;
+        const isArrow = before2 === '->';
+        const isScope = before2 === '::';
+        if (!ctx.explicit && !isWord && !isDot && !isArrow && !isScope) return null;
         const code = ctx.state.doc.toString();
         const result = await fn(code, ctx.pos);
         if (!result || result.matches.length === 0) return null;
@@ -305,8 +317,35 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
           validFor: /^[\w.]*$/,
         };
       };
-      extensions.push(pythonLanguage.data.of({ autocomplete: externalSource }));
+      const langData = language === 'cpp' ? cppLanguage.data : pythonLanguage.data;
+      extensions.push(langData.of({ autocomplete: externalSource }));
     }
+
+    // External hover (LSP-backed) — currently used by C++/clangd
+    extensions.push(hoverTooltip(async (view, pos): Promise<Tooltip | null> => {
+      const fn = externalHoverRef.current;
+      if (!fn) return null;
+      const line = view.state.doc.lineAt(pos);
+      const character = pos - line.from;
+      const result = await fn(line.number - 1, character);
+      if (!result || !result.contents) return null;
+      return {
+        pos,
+        above: true,
+        create() {
+          const dom = document.createElement('div');
+          dom.className = 'cm-tooltip-hover-content';
+          dom.style.padding = '6px 10px';
+          dom.style.maxWidth = '480px';
+          dom.style.fontFamily = 'var(--font-mono, monospace)';
+          dom.style.fontSize = '12px';
+          dom.style.whiteSpace = 'pre-wrap';
+          dom.style.lineHeight = '1.4';
+          dom.textContent = result.contents;
+          return { dom };
+        },
+      };
+    }, { hideOnChange: true }));
 
     if (scheme.type === 'dark') {
       extensions.push(oneDark);

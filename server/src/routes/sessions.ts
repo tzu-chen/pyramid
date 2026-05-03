@@ -5,6 +5,8 @@ import path from 'path';
 import db from '../db.js';
 import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
+import { cppLsp } from '../services/cpp-lsp.js';
+import { cppProject } from '../services/cpp-project.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
 import { terminal } from '../services/terminal.js';
 
@@ -80,7 +82,13 @@ router.get('/:id', (req: Request, res: Response) => {
     const files = db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY is_primary DESC, created_at ASC').all(req.params.id);
     const runs = db.prepare('SELECT * FROM execution_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT 20').all(req.params.id);
 
-    const result: Record<string, unknown> = { ...formatSession(session), files, runs };
+    const absWorkingDir = path.resolve(__dirname, '..', '..', session.working_dir as string);
+    const result: Record<string, unknown> = {
+      ...formatSession(session),
+      files,
+      runs,
+      absolute_working_dir: absWorkingDir,
+    };
 
     if (session.session_type === 'lean') {
       const leanMeta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(req.params.id);
@@ -150,6 +158,11 @@ router.post('/', async (req: Request, res: Response) => {
       fs.writeFileSync(path.join(absWorkingDir, defaultFilename), JSON.stringify(emptyNb, null, 1));
     } else if (!isLean) {
       fs.writeFileSync(path.join(absWorkingDir, defaultFilename), '');
+    }
+
+    // C++ freeform: drop a default .clangd so single-file LSP works out of the box
+    if (!isLean && !isNotebook && language === 'cpp') {
+      cppProject.ensureClangdConfig(absWorkingDir);
     }
 
     // Handle Lean session: scaffold Lake project and insert metadata
@@ -231,6 +244,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     }
     if (session.session_type === 'freeform') {
       terminal.killSession(req.params.id as string);
+      cppLsp.stopLsp(req.params.id as string);
     }
 
     // Delete working directory
