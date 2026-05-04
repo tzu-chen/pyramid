@@ -23,6 +23,12 @@
   color: var(--color-text-tertiary);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .headerButton {
   background: none;
   border: none;
@@ -43,4 +49,18 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.fileTag {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-sans, inherit);
+  letter-spacing: 0.4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  margin-left: 6px;
+  opacity: 0.9;
 }

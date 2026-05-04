@@ -2,8 +2,59 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { fileService } from '../../services/fileService';
 import { SessionFile } from '../../types';
-import { ChevronRightIcon, ChevronDownIcon, DiamondIcon, PlusIcon } from '../Icons/Icons';
+import { ChevronRightIcon, ChevronDownIcon, DiamondIcon, PlusIcon, RefreshIcon } from '../Icons/Icons';
 import styles from './FileTree.module.css';
+
+// ── File-type tag (colorized badge based on extension) ──
+
+interface TagSpec {
+  label: string;
+  bg: string;
+  fg: string;
+}
+
+const TAG_BY_EXT: Record<string, TagSpec> = {
+  cpp:    { label: 'C++',  bg: '#1e6fe810', fg: '#1e6fe8' },
+  cc:     { label: 'C++',  bg: '#1e6fe810', fg: '#1e6fe8' },
+  cxx:    { label: 'C++',  bg: '#1e6fe810', fg: '#1e6fe8' },
+  c:      { label: 'C',    bg: '#3b82f610', fg: '#3b82f6' },
+  h:      { label: 'H',    bg: '#7c3aed10', fg: '#7c3aed' },
+  hpp:    { label: 'H++',  bg: '#7c3aed10', fg: '#7c3aed' },
+  py:     { label: 'PY',   bg: '#eab30810', fg: '#a16207' },
+  jl:     { label: 'JL',   bg: '#9333ea10', fg: '#9333ea' },
+  lean:   { label: 'LEAN', bg: '#dc262610', fg: '#dc2626' },
+  ipynb:  { label: 'NB',   bg: '#ea580c10', fg: '#ea580c' },
+  md:     { label: 'MD',   bg: '#64748b10', fg: '#64748b' },
+  json:   { label: 'JSON', bg: '#10b98110', fg: '#059669' },
+  toml:   { label: 'TOML', bg: '#ca8a0410', fg: '#a16207' },
+  yaml:   { label: 'YAML', bg: '#ca8a0410', fg: '#a16207' },
+  yml:    { label: 'YAML', bg: '#ca8a0410', fg: '#a16207' },
+  csv:    { label: 'CSV',  bg: '#0d948810', fg: '#0d9488' },
+  tsv:    { label: 'TSV',  bg: '#0d948810', fg: '#0d9488' },
+  txt:    { label: 'TXT',  bg: '#64748b10', fg: '#64748b' },
+  log:    { label: 'LOG',  bg: '#64748b10', fg: '#64748b' },
+  ts:     { label: 'TS',   bg: '#3178c610', fg: '#3178c6' },
+  tsx:    { label: 'TSX',  bg: '#3178c610', fg: '#3178c6' },
+  js:     { label: 'JS',   bg: '#eab30810', fg: '#a16207' },
+  jsx:    { label: 'JSX',  bg: '#eab30810', fg: '#a16207' },
+  html:   { label: 'HTML', bg: '#ea580c10', fg: '#ea580c' },
+  css:    { label: 'CSS',  bg: '#2563eb10', fg: '#2563eb' },
+  sh:     { label: 'SH',   bg: '#16a34a10', fg: '#16a34a' },
+  cmake:  { label: 'CMK',  bg: '#db277710', fg: '#db2777' },
+  png:    { label: 'IMG',  bg: '#06b6d410', fg: '#0891b2' },
+  jpg:    { label: 'IMG',  bg: '#06b6d410', fg: '#0891b2' },
+  jpeg:   { label: 'IMG',  bg: '#06b6d410', fg: '#0891b2' },
+  svg:    { label: 'SVG',  bg: '#06b6d410', fg: '#0891b2' },
+  pdf:    { label: 'PDF',  bg: '#dc262610', fg: '#dc2626' },
+};
+
+function getTagForFile(filename: string): TagSpec | null {
+  if (filename.toLowerCase() === 'cmakelists.txt') return { label: 'CMK', bg: '#db277710', fg: '#db2777' };
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0) return null;
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return TAG_BY_EXT[ext] ?? null;
+}
 
 // ── Tree data structures ──
 
@@ -428,13 +479,22 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
           style={{ display: 'none' }}
           onChange={handleFileUpload}
         />
-        <button
-          className={styles.headerButton}
-          onClick={() => fileInputRef.current?.click()}
-          title="Upload file"
-        >
-          <PlusIcon size={12} />
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            className={styles.headerButton}
+            onClick={() => { onFilesChanged(); refreshTree(); }}
+            title="Refresh"
+          >
+            <RefreshIcon size={12} />
+          </button>
+          <button
+            className={styles.headerButton}
+            onClick={() => fileInputRef.current?.click()}
+            title="Upload file"
+          >
+            <PlusIcon size={12} />
+          </button>
+        </div>
       </div>
 
       {/* Tree content */}
@@ -582,6 +642,18 @@ function TreeItemWithCreate({
       >
         <FileIcon isDir={node.isDir} isOpen={expanded} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{node.name}</span>
+        {!node.isDir && (() => {
+          const tag = getTagForFile(node.name);
+          if (!tag) return null;
+          return (
+            <span
+              className={styles.fileTag}
+              style={{ background: tag.bg, color: tag.fg }}
+            >
+              {tag.label}
+            </span>
+          );
+        })()}
       </div>
       {node.isDir && expanded && (
         <>

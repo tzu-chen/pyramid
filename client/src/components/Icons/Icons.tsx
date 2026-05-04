@@ -78,6 +78,15 @@ export function PlusIcon({ size = 16, ...props }: IconProps) {
   );
 }
 
+export function RefreshIcon({ size = 16, ...props }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
+      <path d="M13.5 2.5v3h-3" />
+    </svg>
+  );
+}
+
 export function DiamondIcon({ size = 16, ...props }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" stroke="none" {...props}>
