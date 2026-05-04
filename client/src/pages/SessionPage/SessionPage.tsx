@@ -43,6 +43,11 @@ type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
 const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
 
+// Files clangd should syntax-check. Anything else (CMakeLists.txt, *.txt,
+// *.md, ...) must not be opened in clangd or surface clangd diagnostics, even
+// if it lives in a C++ session.
+const CPP_SOURCE_EXTS = new Set(['cpp', 'cc', 'cxx', 'c', 'h', 'hpp', 'hh', 'hxx', 'ipp', 'tpp', 'inl']);
+
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const { session, loading, error, refresh } = useSession(id);
@@ -195,9 +200,12 @@ function SessionPage() {
     }
   }, [id, activeFileId]);
 
-  // Reset LSP opened-file tracking on file switch or reconnection
+  // Reset LSP opened-file tracking on file switch or reconnection. fileUriRef
+  // is cleared too so that didChange/outline/completion don't keep targeting
+  // the previously opened file when the new active file isn't an LSP file.
   useEffect(() => {
     lspOpenedFileRef.current = null;
+    fileUriRef.current = null;
   }, [activeFileId, lsp.initialized, cppLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
@@ -213,14 +221,20 @@ function SessionPage() {
     }
   }, [isLean, lsp.initialized, fileContent, activeFileId, session?.files, getFileUri, lsp.sendDidOpen]);
 
-  // Same flow for clangd (freeform C++)
+  // Same flow for clangd (freeform C++). Only C/C++ source files are opened
+  // in clangd; for anything else (CMakeLists.txt, *.txt, ...) the URI is
+  // explicitly cleared so stray didChange / completion / hover requests can't
+  // be sent against the previously opened source file.
   useEffect(() => {
     if (!isFreeformCpp || !cppLsp.initialized || !session?.files || !activeFileId) return;
     const file = session.files.find(f => f.id === activeFileId);
     if (!file) return;
-    // Only open .cpp/.cc/.cxx/.h/.hpp files
     const ext = file.filename.split('.').pop()?.toLowerCase() ?? '';
-    if (!['cpp', 'cc', 'cxx', 'c', 'h', 'hpp', 'hh', 'hxx'].includes(ext)) return;
+    if (!CPP_SOURCE_EXTS.has(ext)) {
+      fileUriRef.current = null;
+      lspOpenedFileRef.current = null;
+      return;
+    }
     const uri = getFileUri(file.filename);
     fileUriRef.current = uri;
     if (lspOpenedFileRef.current !== uri) {
@@ -572,6 +586,9 @@ function SessionPage() {
 
   const activeFile = activeFileId ? session.files.find(f => f.id === activeFileId) : null;
   const activeFileExt = activeFile?.filename.split('.').pop()?.toLowerCase() ?? '';
+  // clangd integration (diagnostics, completion, hover, outline) only applies
+  // to actual C/C++ source files within a freeform C++ session.
+  const activeFileIsCpp = isFreeformCpp && CPP_SOURCE_EXTS.has(activeFileExt);
 
   // Lake status badge variant
   const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
@@ -753,13 +770,13 @@ function SessionPage() {
                   value={fileContent}
                   language={session.language}
                   onChange={handleSaveFile}
-                  diagnostics={isFreeformCpp ? cppLsp.diagnostics : undefined}
-                  externalCompletion={isFreeformCpp ? cppExternalCompletion : undefined}
-                  externalHover={isFreeformCpp ? cppExternalHover : undefined}
+                  diagnostics={activeFileIsCpp ? cppLsp.diagnostics : undefined}
+                  externalCompletion={activeFileIsCpp ? cppExternalCompletion : undefined}
+                  externalHover={activeFileIsCpp ? cppExternalHover : undefined}
                   fontSize={fontSize}
                   onInsertRef={insertRef}
                   onJumpRef={onJumpRef}
-                  onGetSelectionRef={isFreeformCpp ? getSelectionRef : undefined}
+                  onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
                 />
               </div>
             </div>
