@@ -199,6 +199,13 @@ export interface ExternalHoverResult {
 
 export type ExternalHoverSource = (line: number, character: number) => Promise<ExternalHoverResult | null>;
 
+export interface EditorSelection {
+  text: string;
+  empty: boolean;
+  startLine: number; // 1-indexed
+  endLine: number;   // 1-indexed
+}
+
 interface CodeEditorProps {
   value: string;
   language: string;
@@ -209,6 +216,7 @@ interface CodeEditorProps {
   fontSize?: number;
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
   onJumpRef?: MutableRefObject<((line: number, column: number) => void) | null>;
+  onGetSelectionRef?: MutableRefObject<(() => EditorSelection) | null>;
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
 }
@@ -246,7 +254,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, externalCompletion, externalHover }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, externalCompletion, externalHover }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -401,6 +409,28 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       if (onInsertRef) onInsertRef.current = null;
     };
   }, [onInsertRef, createEditor]);
+
+  // Expose the current editor selection (text + line range) so external
+  // panels — e.g. Compiler Explorer — can read what the user has highlighted.
+  useEffect(() => {
+    if (onGetSelectionRef) {
+      onGetSelectionRef.current = () => {
+        const view = viewRef.current;
+        if (!view) return { text: '', empty: true, startLine: 1, endLine: 1 };
+        const { from, to } = view.state.selection.main;
+        const doc = view.state.doc;
+        return {
+          text: doc.sliceString(from, to),
+          empty: from === to,
+          startLine: doc.lineAt(from).number,
+          endLine: doc.lineAt(to).number,
+        };
+      };
+    }
+    return () => {
+      if (onGetSelectionRef) onGetSelectionRef.current = null;
+    };
+  }, [onGetSelectionRef, createEditor]);
 
   // Expose a jump-to function so external panels (e.g. build diagnostics) can
   // navigate to a specific 1-indexed line/column.

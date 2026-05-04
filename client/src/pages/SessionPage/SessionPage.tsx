@@ -22,6 +22,8 @@ import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import BuildPanel from '../../components/BuildPanel/BuildPanel';
 import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
 import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
+import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
+import type { EditorSelection } from '../../components/CodeEditor/CodeEditor';
 import {
   cppBuildService,
   FLAVOR_PRESETS,
@@ -35,7 +37,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
@@ -124,6 +126,10 @@ function SessionPage() {
   const [cmakeHistoryRefresh, setCmakeHistoryRefresh] = useState(0);
   const onJumpRef = useRef<((line: number, column: number) => void) | null>(null);
   const pendingJumpRef = useRef<{ line: number; column: number } | null>(null);
+  const getSelectionRef = useRef<(() => EditorSelection) | null>(null);
+  const getSelectionStable = useCallback((): EditorSelection | null => {
+    return getSelectionRef.current ? getSelectionRef.current() : null;
+  }, []);
 
   // C++ outline symbols (refreshed on file change + debounced edits)
   const [cppSymbols, setCppSymbols] = useState<CppDocumentSymbol[]>([]);
@@ -753,6 +759,7 @@ function SessionPage() {
                   fontSize={fontSize}
                   onInsertRef={insertRef}
                   onJumpRef={onJumpRef}
+                  onGetSelectionRef={isFreeformCpp ? getSelectionRef : undefined}
                 />
               </div>
             </div>
@@ -842,6 +849,14 @@ function SessionPage() {
                     onClick={() => setActiveTab('outline')}
                   >
                     Outline
+                  </button>
+                )}
+                {isFreeformCpp && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'asm' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('asm')}
+                  >
+                    Asm
                   </button>
                 )}
                 <button
@@ -1005,6 +1020,15 @@ function SessionPage() {
                 loading={cppSymbolsLoading}
                 initialized={cppLsp.initialized}
                 onSelect={handleOutlineSelect}
+              />
+            )}
+
+            {/* C++: Compiler Explorer (godbolt.org) */}
+            {activeTab === 'asm' && isFreeformCpp && (
+              <CompilerExplorerPanel
+                fileName={session.files.find(f => f.id === activeFileId)?.filename || ''}
+                fileContent={fileContent}
+                getSelection={getSelectionStable}
               />
             )}
 

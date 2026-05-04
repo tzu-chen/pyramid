@@ -1,0 +1,272 @@
+.root {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  overflow: auto;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.controlRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 56px;
+}
+
+.filterInput,
+.flagsInput {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  flex: 0 0 180px;
+}
+
+.flagsInput {
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+
+.compilerSelect {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.scopeHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  flex: 1 1 auto;
+}
+
+.compileBtn {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-primary);
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  cursor: pointer;
+}
+
+.compileBtn:hover {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.compileBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  padding: var(--space-2);
+  background-color: var(--color-danger-light);
+  border-radius: var(--radius-sm);
+}
+
+.warn {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+}
+
+.placeholder {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: inherit;
+}
+
+.placeholderSmall {
+  padding: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: inherit;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.statusPill {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statusOk {
+  background-color: var(--color-success);
+  color: white;
+}
+
+.statusFail {
+  background-color: var(--color-danger);
+  color: white;
+}
+
+.duration {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.scopeTag {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.sectionLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-1);
+}
+
+.stderr {
+  display: flex;
+  flex-direction: column;
+}
+
+.stderrPre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  background-color: var(--color-danger-light);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.stdoutSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.stdoutPre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.asmSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.asmList {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  max-height: 60vh;
+}
+
+.asmLine {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: baseline;
+  padding: 0 var(--space-2);
+  border-left: 2px solid transparent;
+}
+
+.asmLine:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.asmLineNo {
+  color: var(--color-text-tertiary);
+  text-align: right;
+  padding-right: var(--space-2);
+  user-select: none;
+  font-size: 10px;
+}
+
+.asmText {
+  margin: 0;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--color-text);
+}
+
+.asmLabel .asmText {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.asmDirective .asmText {
+  color: var(--color-text-secondary);
+}
+
+.asmInstr .asmText {
+  color: var(--color-text);
+}
