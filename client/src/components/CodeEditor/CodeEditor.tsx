@@ -9,7 +9,9 @@ import { linter } from '@codemirror/lint';
 import { indentMore, indentLess } from '@codemirror/commands';
 import { acceptCompletion, completionStatus, startCompletion, CompletionContext, CompletionResult as CMCompletionResult } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { vim } from '@replit/codemirror-vim';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useEditorVimMode } from '../../contexts/EditorVimModeContext';
 import { UNICODE_MAP } from '../../data/unicodeSymbols';
 import styles from './CodeEditor.module.css';
 
@@ -259,8 +261,11 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
   const fontSizeCompartment = useRef(new Compartment());
+  const vimCompartment = useRef(new Compartment());
   const fontSizeRef = useRef(fontSize);
   const { scheme } = useTheme();
+  const { vimMode } = useEditorVimMode();
+  const vimModeRef = useRef(vimMode);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onCursorChangeRef = useRef(onCursorChange);
@@ -278,6 +283,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
     }
 
     const extensions: Extension[] = [
+      vimCompartment.current.of(vimModeRef.current ? vim() : []),
       basicSetup,
       tabKeymap,
       getLanguageExtension(language),
@@ -498,6 +504,16 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       ),
     });
   }, [fontSize]);
+
+  // Toggle vim mode without recreating the editor
+  useEffect(() => {
+    vimModeRef.current = vimMode;
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: vimCompartment.current.reconfigure(vimMode ? vim() : []),
+    });
+  }, [vimMode]);
 
   // Update content from outside
   useEffect(() => {

@@ -3,6 +3,7 @@ import { settingsService } from '../../services/claudeService';
 import { claudeService } from '../../services/claudeService';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
+import { useEditorVimMode } from '../../contexts/EditorVimModeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { COLOR_SCHEMES } from '../../colorSchemes';
 import styles from './SettingsModal.module.css';
@@ -14,6 +15,7 @@ interface SettingsModalProps {
 function SettingsModal({ onClose }: SettingsModalProps) {
   const { schemeId, setScheme, autoSwitch, setAutoSwitch } = useTheme();
   const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
+  const { vimMode, toggle: toggleVimMode } = useEditorVimMode();
 
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
@@ -129,6 +131,21 @@ function SettingsModal({ onClose }: SettingsModalProps) {
                   </button>
                 )}
               </div>
+            </div>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Vim mode</span>
+                <span className={styles.rowDesc}>Vim keybindings in all code editors</span>
+              </div>
+              <button
+                className={`${styles.toggle} ${vimMode ? styles.toggleOn : ''}`}
+                onClick={toggleVimMode}
+                role="switch"
+                aria-checked={vimMode}
+                aria-label="Vim mode"
+              >
+                <span className={styles.toggleThumb} />
+              </button>
             </div>
             <div className={styles.grid}>
               {COLOR_SCHEMES.map(scheme => (
