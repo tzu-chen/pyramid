@@ -21,6 +21,27 @@ export interface CppHoverResult {
   contents: string;
 }
 
+export interface LspPosition {
+  line: number;
+  character: number;
+}
+
+export interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+
+// Hierarchical DocumentSymbol (LSP spec). clangd returns this shape when the
+// client advertises hierarchicalDocumentSymbolSupport.
+export interface CppDocumentSymbol {
+  name: string;
+  detail?: string;
+  kind: number;
+  range: LspRange;
+  selectionRange: LspRange;
+  children?: CppDocumentSymbol[];
+}
+
 export function useCppLsp(sessionId: string | undefined, enabled: boolean, projectPath: string | null = null) {
   const [state, setState] = useState<LspState>({
     connected: false,
@@ -89,6 +110,10 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
               },
               hover: { dynamicRegistration: false, contentFormat: ['markdown', 'plaintext'] },
               definition: { dynamicRegistration: false },
+              documentSymbol: {
+                dynamicRegistration: false,
+                hierarchicalDocumentSymbolSupport: true,
+              },
               publishDiagnostics: { relatedInformation: true },
             },
           },
@@ -280,6 +305,35 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
     return result.items || [];
   }, [sendRequest]);
 
+  const requestDocumentSymbols = useCallback(async (uri: string): Promise<CppDocumentSymbol[]> => {
+    const result = await sendRequest<unknown>(
+      'textDocument/documentSymbol',
+      { textDocument: { uri } },
+      6000,
+    );
+    if (!result || !Array.isArray(result)) return [];
+
+    // clangd returns DocumentSymbol[] when hierarchical support is advertised.
+    // Fall back to the flat SymbolInformation[] shape if a server ever returns it.
+    const first = result[0] as Record<string, unknown> | undefined;
+    if (first && 'location' in first && !('range' in first)) {
+      const flat = result as Array<{
+        name: string;
+        kind: number;
+        location: { range: LspRange };
+        containerName?: string;
+      }>;
+      return flat.map(s => ({
+        name: s.name,
+        kind: s.kind,
+        range: s.location.range,
+        selectionRange: s.location.range,
+        detail: s.containerName,
+      }));
+    }
+    return result as CppDocumentSymbol[];
+  }, [sendRequest]);
+
   const requestHover = useCallback(async (uri: string, line: number, character: number) => {
     const result = await sendRequest<{ contents?: unknown } | null>(
       'textDocument/hover',
@@ -307,5 +361,6 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
     sendDidChange,
     requestCompletion,
     requestHover,
+    requestDocumentSymbols,
   };
 }

@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useLeanLsp } from '../../hooks/useLeanLsp';
-import { useCppLsp } from '../../hooks/useCppLsp';
+import { useCppLsp, type CppDocumentSymbol } from '../../hooks/useCppLsp';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
@@ -20,6 +20,7 @@ import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import BuildPanel from '../../components/BuildPanel/BuildPanel';
+import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
 import {
   cppBuildService,
   FLAVOR_PRESETS,
@@ -33,7 +34,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'outline' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
@@ -122,6 +123,11 @@ function SessionPage() {
   const [cmakeHistoryRefresh, setCmakeHistoryRefresh] = useState(0);
   const onJumpRef = useRef<((line: number, column: number) => void) | null>(null);
   const pendingJumpRef = useRef<{ line: number; column: number } | null>(null);
+
+  // C++ outline symbols (refreshed on file change + debounced edits)
+  const [cppSymbols, setCppSymbols] = useState<CppDocumentSymbol[]>([]);
+  const [cppSymbolsLoading, setCppSymbolsLoading] = useState(false);
+  const debouncedFileContent = useDebounce(fileContent, 800);
 
   const debouncedNotes = useDebounce(notes, 1500);
   const prevNotesRef = useRef('');
@@ -215,6 +221,30 @@ function SessionPage() {
       lspOpenedFileRef.current = uri;
     }
   }, [isFreeformCpp, cppLsp.initialized, fileContent, activeFileId, session?.files, getFileUri, cppLsp.sendDidOpen]);
+
+  // C++ outline: refresh symbols whenever the file content settles or file changes.
+  // clangd accepts documentSymbol immediately after didOpen/didChange; the
+  // debounced content ensures we don't spam requests on every keystroke.
+  useEffect(() => {
+    if (!isFreeformCpp || !cppLsp.initialized || !fileUriRef.current) {
+      setCppSymbols([]);
+      return;
+    }
+    let cancelled = false;
+    setCppSymbolsLoading(true);
+    cppLsp
+      .requestDocumentSymbols(fileUriRef.current)
+      .then((syms) => {
+        if (!cancelled) setCppSymbols(syms);
+      })
+      .catch(() => {
+        if (!cancelled) setCppSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCppSymbolsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isFreeformCpp, cppLsp, activeFileId, debouncedFileContent]);
 
   // Auto-save notes
   useEffect(() => {
@@ -376,6 +406,11 @@ function SessionPage() {
       setExecuting(false);
     }
   };
+
+  const handleOutlineSelect = useCallback((line: number, character: number) => {
+    // LSP positions are 0-indexed; onJumpRef expects 1-indexed.
+    onJumpRef.current?.(line + 1, character + 1);
+  }, []);
 
   const handleDiagnosticClick = useCallback((d: CompilerDiagnostic) => {
     if (!session?.files) return;
@@ -792,6 +827,14 @@ function SessionPage() {
                     )}
                   </button>
                 )}
+                {isFreeformCpp && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'outline' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('outline')}
+                  >
+                    Outline
+                  </button>
+                )}
                 <button
                   className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('claude')}
@@ -944,6 +987,16 @@ function SessionPage() {
                   <div className={styles.placeholder}>No cross-app links</div>
                 )}
               </div>
+            )}
+
+            {/* C++: Outline (clangd documentSymbol) */}
+            {activeTab === 'outline' && isFreeformCpp && (
+              <OutlinePanel
+                symbols={cppSymbols}
+                loading={cppSymbolsLoading}
+                initialized={cppLsp.initialized}
+                onSelect={handleOutlineSelect}
+              />
             )}
 
             {/* CMake: Build panel */}

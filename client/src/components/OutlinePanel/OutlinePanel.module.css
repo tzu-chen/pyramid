@@ -1,0 +1,77 @@
+.panel {
+  padding: var(--space-2) 0;
+  font-family: var(--font-mono);
+  font-size: inherit;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.placeholder {
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-6);
+  font-family: var(--font-sans);
+  font-style: italic;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.row:hover {
+  background-color: var(--color-bg-secondary);
+}
+
+.chevron {
+  display: inline-block;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  text-align: center;
+}
+
+.kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-primary-text);
+  background-color: var(--color-text-tertiary);
+}
+
+.kindClass { background-color: #c92a2a; }
+.kindFunction { background-color: #4263eb; }
+.kindMethod { background-color: #1c7ed6; }
+.kindField { background-color: #2b8a3e; }
+.kindProperty { background-color: #5f3dc4; }
+.kindEnum { background-color: #e67700; }
+.kindVariable { background-color: #868e96; }
+.kindNamespace { background-color: #495057; }
+.kindFile { background-color: #495057; }
+
+.name {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: var(--space-2);
+}
