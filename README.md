@@ -1,49 +1,68 @@
 # Pyramid
 
-A computational workbench for interactive **Lean 4 proof development** with full LSP integration and **freeform numerical/scientific computation** (Python/Julia/C++), accessible from any device — including iPad — via the browser. Includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance.
+A computational workbench for **Lean 4 proof development**, **C++ engineering** with full clangd + CMake support, **freeform numerical computation** (Python / Julia), and **Jupyter-style notebooks** — all accessible from any device on the local network, including iPad, via the browser. Includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance.
 
 ## Features
 
-### Lean 4 Proof Development (Primary)
+### Lean 4 Proof Development
 
-- **Interactive proof environment** — Editor + tactic goal state panel + diagnostics, all in the browser
-- **Full LSP integration** — The backend spawns a `lean --server` process per session and proxies LSP JSON-RPC messages over WebSocket
-- **Mathlib support** — Each session gets a proper Lake project with Mathlib as a dependency and shared prebuilt artifact cache
-- **Goal state panel** — Tactic goals rendered with KaTeX, updating live on cursor movement
-- **Inline diagnostics** — Errors and warnings displayed directly in the editor
-- **Multi-device access** — Work on Lean proofs from any browser on the local network, including iPad
+- **Interactive proof environment** — editor + tactic goal state panel + diagnostics, all in the browser
+- **Full LSP integration** — backend spawns a `lean --server` per session and proxies LSP JSON-RPC over WebSocket
+- **Mathlib support** — each session gets a proper Lake project with Mathlib as a dependency and shared prebuilt artifact cache
+- **Goal state panel** — tactic goals rendered with KaTeX, updated live on cursor movement
+- **Inline diagnostics** — errors and warnings displayed directly in the editor
+- **Unicode input** — `\forall` → `∀`, `\R` → `ℝ`, etc., with a category-grouped symbol palette
+- **Multi-device access** — work on Lean proofs from any browser on the LAN
 
-### Freeform Code Execution
+### C++ Engineering
 
-- Run Python 3, Julia, or C++ code with stdout/stderr capture
-- Execution history with timing and exit codes
-- Session-isolated working directories
+- **clangd LSP per session** — diagnostics, hover, completion, document symbols (rendered as an outline tree). Default `.clangd` config dropped automatically so single-file scratch work is fully featured before any build system exists.
+- **CMake build pipeline** — auto-detected via `CMakeLists.txt`. Configure → build → run with parsed diagnostics surfaced as a clickable list.
+- **Build flavors and sanitizers** — one-click switching between `Debug` / `Release` / `RelWithDebInfo` / `MinSizeRel`, optionally combined with `asan` / `tsan` / `ubsan` / `msan`. Each flavor lives in its own `build/<flavor>/` directory.
+- **Build artifact browser** — tree view of `build/`: classify executables, objects, archives, shared libs, `compile_commands.json`. Inline view for text artifacts, download for binaries.
+- **Build history** — every build is persisted with diagnostics; runs link back to the build that produced their binary.
+- **Compiler Explorer integration** — pick a compiler from godbolt.org, view assembly for the current source side-by-side with the editor.
+- **Single-file fallback** — sessions without `CMakeLists.txt` use a one-shot `g++ -O2 -std=c++20 -Wall -Wextra` compile-and-run path.
+- **Persistent shell** — every freeform session has a real PTY-backed terminal in the right pane (multiple tabs supported, scrollback preserved across reconnects).
+
+### Notebook Sessions
+
+- **Jupyter-style cells** — Python code/markdown cells with output rendering (text/HTML/images)
+- **Per-session kernel** — `ipykernel` driven by a small Python sidecar; auto-completion via the kernel
+- **Notebook is a plain `.ipynb`** in the session working directory — interoperates with anything else that reads notebooks
+
+### Freeform (Python / Julia)
+
+- Run code with stdout/stderr capture, execution history, timing, exit codes
+- Session-isolated working directories with a multi-file tree, file uploads, and folder operations
 
 ### Claude AI Integration
 
-- **Error diagnosis** — auto-assembles diagnostics/runtime errors as context for Claude
+- **Error diagnosis** — auto-assembles diagnostics / build errors / runtime errors as context for Claude
 - **Formalization help** (Lean) — translates informal math into Lean 4 proofs with Scribe context
-- **Implementation help** (freeform) — assists with algorithm and method implementation
-- **Context auto-assembly** — current file, diagnostics, goal state, and linked Scribe nodes
+- **Implementation help** — assists with algorithm and method implementation
+- **Context auto-assembly** — current file, diagnostics, goal state, last build/run output, and linked Scribe nodes
 - **Apply to editor** — one-click insertion of Claude's suggested code
-- API key management via Settings modal
+- API key managed via the Settings modal
 
 ### General
 
-- **Session-based workflow** — Each session bundles code, outputs, notes, and cross-app links into a logged, searchable unit
+- **Session-based workflow** — each session bundles code, outputs, notes, and cross-app links into a logged, searchable unit
 - **Full-text search** across all sessions (SQLite FTS5)
-- **Markdown + LaTeX notes** per session with KaTeX rendering
+- **Markdown + LaTeX notes** per session, KaTeX rendering
 - **Activity heatmap** and statistics dashboard
-- **Light/dark themes** with 8 color schemes
+- **Light/dark themes** with eight color schemes; adjustable editor font size
 - **Cross-app links** to sibling tools (Navigate, Scribe, Monolith, Granary)
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 18, Vite 6, TypeScript 5, CodeMirror 6, KaTeX, Recharts |
-| Backend | Express 4, TypeScript 5, better-sqlite3, ws (WebSocket) |
-| Lean Integration | Lean 4 LSP server, Lake build system, WebSocket JSON-RPC bridge |
+| Frontend | React 18, Vite 6, TypeScript 5, CodeMirror 6 (`lang-cpp`, `lang-python`, custom Lean), xterm.js, KaTeX, Recharts |
+| Backend | Express 4, TypeScript 5, better-sqlite3, ws (WebSocket), node-pty, multer |
+| LSP | Generic `lsp-bridge.ts` shared by Lean (`lean --server`) and C++ (`clangd`) |
+| Build | CMake (Ninja preferred when available), GCC/Clang diagnostic parser |
+| Notebooks | `ipykernel` driven by a Python sidecar (`jupyter-bridge.py`) |
 | Styling | CSS Modules + CSS custom properties (no Tailwind) |
 
 ## Prerequisites
@@ -55,10 +74,16 @@ For Lean sessions:
 - **Lean 4** via [elan](https://github.com/leanprover/elan) toolchain manager
 - **Lake** (bundled with Lean)
 
-For freeform sessions (optional, based on language):
-- **Python 3**
+For C++ sessions:
+- **clangd** (LLVM toolchain)
+- **g++** with C++20 support
+- **cmake** (and optionally **ninja** — auto-detected and preferred)
+
+For notebook sessions:
+- **Python 3** with **`ipykernel`** installed (`pip install ipykernel`)
+
+For other freeform languages (optional):
 - **Julia**
-- **g++** (with C++17 support)
 
 ## Getting Started
 
@@ -90,7 +115,7 @@ npm run build
 npm start
 ```
 
-The production server runs on port 3007 and serves both the API and the built frontend.
+The production server runs on port 3007 and serves both the API and the built frontend. The build step copies `jupyter-bridge.py` into `dist/services/` so notebook kernels work without the source tree.
 
 ## Project Structure
 
@@ -99,56 +124,93 @@ pyramid/
 ├── package.json                # Root scripts (dev, build, install:all)
 ├── client/                     # React frontend (Vite)
 │   ├── src/
-│   │   ├── App.tsx             # Routing and global state
+│   │   ├── App.tsx             # Routing
 │   │   ├── types.ts            # Shared TypeScript interfaces
-│   │   ├── components/         # Reusable UI (CodeEditor, GoalStatePanel, ClaudePanel, ...)
-│   │   ├── pages/              # Route-level pages (Dashboard, SessionList, SessionPage, ...)
-│   │   ├── services/           # API client layer (REST + WebSocket)
-│   │   ├── hooks/              # Custom React hooks (useLeanLsp, useSession, ...)
-│   │   └── contexts/           # Theme context
-│   └── vite.config.ts          # Vite config with API/WS proxy to port 3007
+│   │   ├── components/
+│   │   │   ├── ArtifactBrowser/      # Build artifact tree
+│   │   │   ├── BuildPanel/           # CMake configure/build UI + diagnostics
+│   │   │   ├── ClaudePanel/          # Claude AI assistant
+│   │   │   ├── CodeEditor/           # CodeMirror 6 wrapper, LSP integration
+│   │   │   ├── CompilerExplorerPanel/# godbolt.org assembly view
+│   │   │   ├── CsvViewer/            # Tabular preview for .csv data
+│   │   │   ├── FileTree/             # Multi-file directory browser
+│   │   │   ├── GoalStatePanel/       # Lean tactic goal state
+│   │   │   ├── NotebookEditor/       # Jupyter cell editor
+│   │   │   ├── OutlinePanel/         # clangd document symbols
+│   │   │   ├── SymbolPalette/        # Lean Unicode picker
+│   │   │   └── TerminalPane/         # xterm.js front-end for the PTY
+│   │   ├── pages/              # Route-level pages
+│   │   ├── services/           # REST + WebSocket clients
+│   │   ├── hooks/              # useLeanLsp, useCppLsp, useNotebookKernel, useTerminal, ...
+│   │   └── contexts/           # Theme, editor font size
+│   └── vite.config.ts          # Proxy /api and /ws to port 3007
 └── server/                     # Express backend
     ├── src/
-    │   ├── index.ts            # Express app + WebSocket server setup
-    │   ├── db.ts               # SQLite schema and migrations
+    │   ├── index.ts            # Express app + WebSocket upgrade routing
+    │   ├── db.ts               # SQLite schema + migrations
     │   ├── routes/             # REST endpoint handlers
-    │   └── services/           # Business logic
-    │       ├── execution.ts    # Child process spawning (Python/Julia/C++)
-    │       ├── lean-lsp.ts     # Lean LSP server lifecycle + WebSocket relay
-    │       ├── lean-project.ts # Lake project scaffolding and Mathlib cache
-    │       ├── claude.ts       # Claude API client
-    │       └── scribe.ts       # Scribe cross-app proxy
+    │   └── services/
+    │       ├── lsp-bridge.ts       # Generic LSP-over-WebSocket relay
+    │       ├── lean-lsp.ts         # Lean wrapper (lean --server)
+    │       ├── lean-project.ts     # Lake project scaffolding
+    │       ├── cpp-lsp.ts          # C++ wrapper (clangd)
+    │       ├── cpp-project.ts      # Default .clangd config
+    │       ├── cpp-build.ts        # CMake configure/build/run + artifact tree
+    │       ├── execution.ts        # Single-file Python/Julia/C++/Lean runner
+    │       ├── notebook-kernel.ts  # Jupyter kernel WebSocket relay
+    │       ├── jupyter-bridge.py   # Python sidecar driving ipykernel
+    │       ├── terminal.ts         # PTY-backed shells (node-pty)
+    │       ├── godbolt.ts          # Compiler Explorer REST client
+    │       ├── claude.ts           # Anthropic Messages API client
+    │       └── scribe.ts           # Scribe cross-app proxy
     └── data/                   # Runtime data (gitignored)
         ├── pyramid.db          # SQLite database
-        ├── sessions/           # Session working directories
+        ├── sessions/           # Freeform & notebook session working dirs
         └── lean-projects/      # Lake projects (one per Lean session)
 ```
 
-## How Lean Integration Works
+## How the LSP Bridge Works
 
-1. **Session creation** scaffolds a Lake project with `lakefile.toml`, `lean-toolchain`, and Mathlib dependency. Prebuilt Mathlib artifacts are downloaded via `lake exe cache get` (cached globally to avoid re-downloading).
+A single generic class `LspBridge` (`server/src/services/lsp-bridge.ts`) handles every language server Pyramid talks to:
 
-2. **Opening a session** spawns a `lean --server` process attached to the session's Lake project. The process stays alive while the session is active.
+1. Spawns the LSP binary (`lean --server` or `clangd`) with the right working directory.
+2. Reads `Content-Length`–framed JSON-RPC from the LSP's stdout, writes framed messages to its stdin.
+3. Fans out to one or more browser clients connected over WebSocket.
+4. Caches the `initialize` response so reconnecting clients don't trigger duplicate initializes (which most language servers crash on).
+5. Shuts the LSP down cleanly after 30 minutes with no connected clients.
 
-3. **WebSocket bridge** at `ws://localhost:3007/ws/lean/:sessionId` transparently proxies LSP JSON-RPC messages between the browser and the Lean server. The backend does not interpret messages — it is a pass-through relay.
+`lean-lsp.ts` and `cpp-lsp.ts` are 30-line wrappers that just specify the command, args, and `cwd`.
 
-4. **The client** sends `textDocument/didOpen`, `textDocument/didChange`, and `Lean/plainGoal` requests as the user edits and moves the cursor. Diagnostics and goal state responses are rendered in real time.
+For Lean:
 
-5. **Idle timeout** stops the LSP process after 30 minutes of inactivity. It restarts transparently when the user returns.
+1. **Session creation** scaffolds a Lake project with `lakefile.toml`, `lean-toolchain`, and Mathlib. Prebuilt Mathlib artifacts are downloaded via `lake exe cache get` (cached globally to avoid re-downloading per session).
+2. **Opening a session** spawns `lean --server` attached to the project. The process is shared by all clients viewing the session.
+3. **Goal state** is fetched via `$/lean/plainGoal` requests on cursor movement and rendered with KaTeX.
+
+For C++:
+
+1. **Session creation** drops a default `.clangd` so single-file scratch sessions work immediately.
+2. **CMake projects** (any session with `CMakeLists.txt` in its root) get an auto-symlinked `compile_commands.json` after each configure, so clangd sees real per-file flags.
+3. **Document symbols** from `textDocument/documentSymbol` render as an outline tree.
 
 ## API Overview
 
-All endpoints are under the `/api` prefix.
+All endpoints are under the `/api` prefix; WebSockets under `/ws`.
 
 | Group | Endpoints | Description |
 |-------|-----------|-------------|
-| Sessions | `GET/POST/PUT/DELETE /api/sessions` | CRUD, search (FTS5), filter by type/status/language |
-| Files | `GET/POST/PUT/DELETE /api/sessions/:id/files` | File metadata and content read/write |
-| Execution | `POST /api/sessions/:id/execute` | Run code (Python/Julia/C++), get stdout/stderr |
-| Lean | `POST /api/lean/:id/build`, `WS /ws/lean/:id` | Lake build trigger, LSP WebSocket relay |
-| Claude | `POST /api/sessions/:id/claude/ask` | AI-assisted error diagnosis, formalization, implementation |
+| Sessions | `GET/POST/PUT/DELETE /api/sessions` | CRUD, FTS5 search, filter by type/status/language |
+| Files | `GET/POST/PUT/PATCH/DELETE /api/sessions/:id/files`, `/folders`, `/upload`, `/tree` | File and folder management |
+| Execution | `POST /api/sessions/:id/execute` | Single-file or CMake-aware execution |
+| CMake | `POST /api/sessions/:id/cmake/{configure,build,clean}`, `GET /api/sessions/:id/cmake/{status,builds,binaries,artifacts}` | C++ project pipeline |
+| Lean | `POST /api/lean/:id/build`, `WS /ws/lean/:id` | Lake build, LSP relay |
+| C++ LSP | `WS /ws/cpp/:id` | clangd relay |
+| Notebooks | `GET/POST /api/notebooks/:id/kernel`, `WS /ws/notebook/:id` | Jupyter kernel control + relay |
+| Terminal | `WS /ws/terminal/:id/:tabId` | PTY relay (multiple tabs per session) |
+| Compiler Explorer | `GET /api/godbolt/compilers`, `POST /api/godbolt/compile` | godbolt.org passthrough |
+| Claude | `POST /api/sessions/:id/claude/ask` | AI assistant |
 | Scribe Proxy | `GET /api/scribe/*` | Cross-app context from Scribe flowcharts |
-| Stats | `/api/stats/overview`, `/api/stats/heatmap` | Activity and progress analytics |
+| Stats | `/api/stats/overview`, `/api/stats/heatmap`, `/api/stats/languages` | Dashboard analytics |
 | Settings | `GET/PUT /api/settings/:key` | User preferences (incl. Claude API key) |
 
 ## Environment

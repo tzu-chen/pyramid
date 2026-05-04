@@ -4,9 +4,9 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Pyramid is a **computational workbench** for **Lean 4 proof development** with full LSP integration and **freeform numerical/scientific computation** (Python/Julia/C++), accessible from any device including iPad. It includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance. Sessions are the core abstraction — each session bundles code, outputs, notes, and provenance links into a logged, searchable unit.
+Pyramid is a **computational workbench** for **Lean 4 proof development**, **freeform numerical/scientific computation** (Python/Julia/C++ with full clangd/CMake support for C++), and **Jupyter-style notebooks**, accessible from any device including iPad. It includes built-in **Claude AI integration** for error diagnosis, formalization help, and implementation assistance. Sessions are the core abstraction — each session bundles code, outputs, notes, and provenance links into a logged, searchable unit.
 
-The Lean experience is Pyramid's most distinctive feature: it provides an interactive proof development environment (editor + tactic goal state + diagnostics) served as a web app, enabling Lean work from any browser — including iPad — over the local network. No other tool provides this.
+The Lean experience and the C++ experience are Pyramid's two most distinctive features. Both are built on the same generic **LSP bridge** (`lsp-bridge.ts`): the backend spawns a language server (`lean --server` or `clangd`) per session and proxies LSP JSON-RPC over WebSocket. C++ sessions additionally get a CMake-aware build/run pipeline, build artifact browser, document outline, and Compiler Explorer integration.
 
 Pyramid is part of a personal research tooling ecosystem alongside four sibling projects:
 
@@ -28,7 +28,7 @@ npm run dev:server        # Backend only (Express on port 3007, tsx watch for ho
 npm run dev:client        # Frontend only (Vite on port 5177)
 npm run build             # Build both client and server for production
 npm run build:client      # Build frontend only (tsc && vite build)
-npm run build:server      # Build backend only (tsc)
+npm run build:server      # Build backend only (tsc; copies jupyter-bridge.py into dist/)
 npm start                 # Start production server (serves API + built frontend from client/dist/)
 ```
 
@@ -40,7 +40,7 @@ No `.env` files. The only server environment variable is `PORT` (defaults to 300
 
 ## Architecture
 
-Full-stack TypeScript: React 18 + Vite frontend, Express + SQLite backend. Same structure as Navigate, Scribe, and Granary, with additional WebSocket support for LSP communication.
+Full-stack TypeScript: React 18 + Vite frontend, Express + SQLite backend. Same structure as Navigate, Scribe, and Granary, with additional WebSocket support for LSP, Jupyter kernels, and PTY-backed terminals.
 
 ```
 pyramid/
@@ -48,158 +48,134 @@ pyramid/
 ├── client/                   # React frontend (Vite)
 │   ├── src/
 │   │   ├── main.tsx          # Entry point
-│   │   ├── App.tsx           # Root component, routing, global state
+│   │   ├── App.tsx           # Routing, top-level layout
 │   │   ├── types.ts          # Shared TypeScript interfaces
-│   │   ├── styles/
-│   │   │   └── global.css    # CSS custom properties (design tokens), reset, themes
-│   │   ├── components/       # Reusable UI components (one folder each)
-│   │   ├── pages/            # Route-level page components
-│   │   ├── services/         # Data access layer (REST API calls + WebSocket client)
-│   │   ├── hooks/            # Custom React hooks
-│   │   └── contexts/         # React contexts (theme)
+│   │   ├── styles/global.css # CSS custom properties (design tokens), reset, themes
+│   │   ├── components/
+│   │   │   ├── ArtifactBrowser/      # Tree view of build/ output (objects, binaries, compile_commands.json)
+│   │   │   ├── BuildPanel/           # CMake configure/build UI: flavor picker, diagnostics list, build history
+│   │   │   ├── ClaudePanel/          # Claude AI assistant panel
+│   │   │   ├── CodeEditor/           # CodeMirror 6 wrapper (Lean/C++/Python, LSP integration)
+│   │   │   ├── CompilerExplorerPanel/# godbolt.org integration: assembly view for selected source
+│   │   │   ├── CsvViewer/            # Tabular preview for .csv data files
+│   │   │   ├── FileTree/             # Multi-file directory browser (sessions with > 1 file)
+│   │   │   ├── GoalStatePanel/       # Lean tactic goal state, KaTeX-rendered
+│   │   │   ├── NotebookEditor/       # Jupyter-style cell editor + output renderer
+│   │   │   ├── OutlinePanel/         # Document symbols (clangd documentSymbol → tree)
+│   │   │   ├── SettingsModal/
+│   │   │   ├── SymbolPalette/        # Lean Unicode symbol picker
+│   │   │   └── TerminalPane/         # xterm.js front-end for the PTY WebSocket
+│   │   ├── pages/            # Route-level pages (Dashboard, SessionList, NewSession, SessionPage)
+│   │   ├── services/         # Data access layer (REST API + WebSocket clients)
+│   │   ├── hooks/            # useLeanLsp, useCppLsp, useNotebookKernel, useTerminal, useSession, ...
+│   │   └── contexts/         # Theme, editor font size
 │   └── vite.config.ts        # Vite config with /api and /ws proxy to port 3007
 └── server/                   # Express backend
     ├── src/
-    │   ├── index.ts          # Express entry point, mounts route modules, WebSocket setup
+    │   ├── index.ts          # Express entry point, route mounts, WebSocket upgrade routing
     │   ├── db.ts             # SQLite schema init + migrations
     │   ├── routes/           # RESTful route handlers
     │   └── services/         # Business logic
-    │       ├── execution.ts  # Child process spawning for Python/Julia/C++
-    │       ├── lean-lsp.ts   # Lean LSP server lifecycle management
-    │       ├── lean-project.ts # Lake project scaffolding and build
-    │       ├── claude.ts     # Claude API client (Anthropic Messages API)
-    │       ├── claude-prompts.ts # System prompts for Claude modes
-    │       └── scribe.ts     # Scribe cross-app proxy client
+    │       ├── lsp-bridge.ts       # Generic LSP-over-WebSocket relay (process lifecycle, framing, idle timeout, init caching)
+    │       ├── lean-lsp.ts         # Thin wrapper: spawns `lean --server` via lsp-bridge
+    │       ├── lean-project.ts     # Lake project scaffolding and build
+    │       ├── cpp-lsp.ts          # Thin wrapper: spawns `clangd` via lsp-bridge
+    │       ├── cpp-project.ts      # Drops a default `.clangd` into freeform C++ sessions
+    │       ├── cpp-build.ts        # CMake configure/build/run, diagnostic parser, artifact tree
+    │       ├── execution.ts        # Single-file Python/Julia/C++ child process runner
+    │       ├── notebook-kernel.ts  # Jupyter kernel lifecycle + WebSocket relay (via jupyter-bridge.py)
+    │       ├── jupyter-bridge.py   # Python sidecar that drives ipykernel and speaks JSON-lines to the server
+    │       ├── terminal.ts         # PTY-backed shell sessions (node-pty) for freeform sessions
+    │       ├── godbolt.ts          # Compiler Explorer (godbolt.org) REST client + compiler list cache
+    │       ├── claude.ts           # Claude API client (Anthropic Messages API)
+    │       ├── claude-prompts.ts   # System prompts for Claude modes
+    │       └── scribe.ts           # Scribe cross-app proxy client
     └── data/                 # Runtime data (gitignored)
         ├── pyramid.db        # SQLite database
-        ├── sessions/         # Session working directories (code files, outputs)
+        ├── sessions/         # Freeform & notebook session working dirs (code, build/, outputs, .clangd, ...)
         └── lean-projects/    # Lake projects (one per Lean session, with Mathlib cache)
 ```
 
+### LSP Bridge (`lsp-bridge.ts`)
+
+A single generic class `LspBridge` runs every LSP server Pyramid talks to. It owns:
+
+* **Process lifecycle.** `start(sessionId, config)` spawns the LSP binary with the configured `cwd`/`args`/`env`. Idempotent — repeated `start` returns the existing process.
+* **LSP framing.** Reads `Content-Length` framed JSON-RPC from the server's stdout, writes framed messages to its stdin.
+* **WebSocket fan-out.** `handleWebSocket(ws, sessionId, config)` attaches a browser client. Multiple clients per session are supported (server messages broadcast to all). Idle timeout (default 30 minutes) starts when the last client disconnects; force-stop on shutdown.
+* **Initialize caching.** The first `initialize` request is forwarded to the LSP server; the response is cached. Reconnecting clients receive the cached result instead of triggering a duplicate initialize (which would crash most LSP servers). The `initialized` notification is forwarded exactly once.
+
+`lean-lsp.ts` and `cpp-lsp.ts` are ~30-line files that just export a `handleWebSocket` that calls into the shared bridge with their command and args. **All shared LSP behavior lives in `lsp-bridge.ts`.** When adding a new language server, write another thin wrapper rather than reimplementing the bridge.
+
 ---
 
-## Lean 4 Integration (Primary Feature)
+## Lean 4 Integration
 
 ### Overview
 
 Lean sessions provide an interactive proof development environment in the browser. The architecture:
 
-1. **Lake project per session.** Each Lean session gets a proper Lake project directory under `data/lean-projects/<session_id>/` with `lakefile.toml`, `lean-toolchain`, and Mathlib as a dependency. This is scaffolded automatically on session creation.
-
-2. **Lean LSP server per session.** When a Lean session is opened, the backend spawns a `lean --server` process (the Lean Language Server) attached to the session's Lake project. The LSP process is long-lived — it stays running as long as the session is active in the browser.
-
-3. **WebSocket bridge.** The backend proxies LSP JSON-RPC messages between the browser client and the Lean LSP server over a WebSocket connection. The client sends editor changes and cursor positions; the server relays them to the LSP and forwards responses (goal state, diagnostics, completions) back to the client.
-
-4. **Goal state panel.** The client renders the Lean goal state (from `Lean/plainGoal` or `Lean/plainTermGoal` requests) in a dedicated panel, updating on every cursor movement. Math content is rendered with KaTeX.
-
-5. **Multi-device access.** Because the LSP server runs on the backend machine, any device on the LAN (including iPad) gets the full interactive Lean experience through the browser. This is the primary motivation for building Lean support into Pyramid rather than relying on VSCode.
+1. **Lake project per session.** Each Lean session gets a proper Lake project under `data/lean-projects/<session_id>/` with `lakefile.toml`, `lean-toolchain`, and Mathlib as a dependency. Scaffolded automatically on session creation by `lean-project.ts`.
+2. **Lean LSP server per session.** `cpp-lsp.ts`-style wrapper spawns `lean --server` for the session's project and hands the WebSocket off to `LspBridge`. Long-lived; survives client reconnects.
+3. **WebSocket bridge.** Browser ↔ backend over `/ws/lean/:sessionId`; backend ↔ LSP over stdio. Transparent JSON-RPC relay (no transformation beyond `initialize` caching).
+4. **Goal state panel.** Renders the Lean tactic goal state from `$/lean/plainGoal` requests. Math content rendered with KaTeX. (Note: Lean 4 uses the `$/lean/plainGoal` method name, not `Lean/plainGoal`.)
+5. **Multi-device access.** Because the LSP server runs on the backend, any device on the LAN (including iPad) gets the full interactive experience through the browser.
 
 ### Lake Project Scaffolding
 
-The `lean-project` service (`server/src/services/lean-project.ts`) handles project lifecycle:
+`lean-project.ts` handles project lifecycle:
 
-**Creation:** When a Lean session is created, the service:
+**Creation:** when a Lean session is created, the service:
 
 1. Creates `data/lean-projects/<session_id>/`
-2. Writes `lakefile.toml`:
-   ```toml
-   [package]
-   name = "pyramid-session"
-   leanOptions = [{ name = "autoImplicit", value = false }]
+2. Writes `lakefile.toml` with Mathlib as a dependency
+3. Writes `lean-toolchain` pinned to a Mathlib-compatible Lean version
+4. Runs `lake exe cache get` to download prebuilt Mathlib `.olean` files
+5. Creates an initial `Main.lean` with a starter import
 
-   [[require]]
-   name = "mathlib"
-   scope = "leanprover-community"
-   ```
-3. Writes `lean-toolchain` pinned to the Mathlib-compatible Lean version
-4. Runs `lake exe cache get` to download prebuilt Mathlib `.olean` files (cached globally — see Mathlib Cache below)
-5. Creates the initial `.lean` file (e.g., `Main.lean`) with a starter import
+Scaffolding runs **in the background** after the session row is inserted; the `lake_status` field on `lean_session_meta` reflects progress (`initializing` → `ready` / `error`).
 
-**Mathlib cache:** Mathlib prebuilt artifacts are large (~5GB). To avoid re-downloading per session, use a shared cache directory. Set `MATHLIB_CACHE_DIR` or symlink `~/.elan` and `~/.cache/mathlib` so all Lake projects share the same downloaded oleans. The first Lean session creation triggers the download; subsequent sessions reuse the cache.
+**Mathlib cache:** Mathlib prebuilt artifacts are large (~5GB). Use a shared cache to avoid re-downloading per session — set `MATHLIB_CACHE_DIR` or symlink `~/.elan` and `~/.cache/mathlib`.
 
-**Build:** `lake build` compiles the project. The service runs this on demand (when the user explicitly builds) and captures output. For incremental checking, the LSP server handles file-level re-elaboration automatically — a full `lake build` is only needed for final verification.
+**Build:** `lake build` compiles the project. The LSP server handles incremental file-level re-elaboration; an explicit `lake build` is only needed for final verification or when the user clicks the Build button.
 
-### Lean LSP Service
+### Key LSP features
 
-The `lean-lsp` service (`server/src/services/lean-lsp.ts`) manages Lean Language Server processes:
+The bridge is transparent, so any LSP method works as long as the client requests it. The client currently relies on:
 
-**Lifecycle:**
-
-* **Start:** Spawns `lean --server` with `cwd` set to the session's Lake project directory. The process communicates via stdin/stdout using the LSP JSON-RPC protocol.
-* **Stop:** Sends LSP `shutdown` + `exit` when the session is closed or the user navigates away. Processes are also killed on server shutdown.
-* **Idle timeout:** If no WebSocket messages are received for 30 minutes, the LSP process is stopped to conserve resources. It restarts transparently when the user returns.
-
-**Message routing:**
-
-* Client → Server: The browser sends LSP requests/notifications over WebSocket. The backend validates the JSON-RPC structure and forwards to the Lean process's stdin.
-* Server → Client: The backend reads Lean's stdout, parses JSON-RPC messages, and forwards to the browser over WebSocket.
-* The backend does NOT interpret LSP messages beyond basic routing (no caching, no transformation). It is a transparent proxy.
-
-**Key LSP features to support (in priority order):**
-
-1. `textDocument/didOpen`, `textDocument/didChange` — keep the LSP server in sync with editor content
-2. `textDocument/publishDiagnostics` — errors and warnings, displayed inline in the editor
-3. `Lean/plainGoal` — tactic goal state at cursor position, displayed in the Goal State panel
-4. `textDocument/completion` — auto-completion (Mathlib names, tactics)
-5. `textDocument/hover` — type information on hover
-6. `textDocument/definition` — go-to-definition (navigate to Mathlib source)
-
-Items 1–3 are the MVP. Items 4–6 are enhancements.
+1. `textDocument/didOpen`, `textDocument/didChange` — keep the LSP in sync with editor content
+2. `textDocument/publishDiagnostics` — errors/warnings displayed inline in the editor
+3. `$/lean/plainGoal` — tactic goal state at cursor; rendered in the Goal State panel
+4. `textDocument/completion` — Mathlib + tactic completions
+5. `textDocument/hover` — type information
 
 ### WebSocket Protocol
-
-The server exposes a WebSocket endpoint for LSP communication:
 
 ```
 WebSocket: ws://localhost:3007/ws/lean/:sessionId
 ```
 
-**Connection lifecycle:**
+Connection lifecycle:
 
 1. Client connects to `/ws/lean/<sessionId>`
-2. Server checks if a Lean LSP process exists for this session; starts one if not
-3. Client sends `initialize` LSP request; server forwards to Lean, relays response
-4. Bidirectional JSON-RPC message relay until disconnect
-5. On disconnect, idle timeout begins (30 min); after timeout, LSP process is stopped
-
-**Message format:** Raw LSP JSON-RPC over WebSocket text frames. The client is responsible for constructing valid LSP messages. Example:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}
-{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{...}}
-{"jsonrpc":"2.0","id":2,"method":"Lean/plainGoal","params":{"textDocument":{"uri":"file:///..."},"position":{"line":10,"character":4}}}
-```
-
-### Client-Side Lean UI
-
-The `SessionPage` for Lean sessions has a specialized layout:
-
-* **Left pane: Editor** — CodeMirror 6 with Lean 4 syntax highlighting. File tabs for multi-file projects. Unicode input support (e.g., `\forall` → `∀`, `\R` → `ℝ`, `\lam` → `λ`). Inline diagnostics (red/yellow squiggles from `publishDiagnostics`).
-
-* **Right pane: Goal State** (primary tab) — Renders the tactic goal state returned by `Lean/plainGoal`. Updates on every cursor position change within a `by` tactic block. Rendered with KaTeX for mathematical content. Shows "No goals" when the cursor is outside a tactic proof, or "Proof complete ✓" when all goals are closed.
-
-* **Right pane: Messages** tab — Lean info messages (`#check`, `#eval`, `#print` output). Separate from diagnostics.
-
-* **Right pane: Notes** tab — Markdown+LaTeX session notes (same as other session types).
-
-* **Right pane: Links** tab — Cross-app references (same as other session types).
-
-* **Toolbar:** Build button (runs `lake build`), file selector, session status, link to Scribe/Navigate provenance.
+2. Server validates that `lean_session_meta` exists for this session (otherwise socket destroyed)
+3. Server starts a `lean --server` process via `LspBridge` if one isn't already running for this session
+4. Client sends `initialize`; bridge forwards to Lean (or returns cached result on reconnect)
+5. Bidirectional JSON-RPC relay until disconnect
+6. After last client disconnects, idle timer starts (30 min); on expiry, the LSP process is shut down cleanly
 
 ### Lean-Specific Session Data
 
-Lean sessions store additional metadata beyond the base `Session` type:
-
 ```
 interface LeanSessionMeta {
-  id: string;                          // UUID
+  id: string;
   session_id: string;                  // FK → sessions (1:1)
-  lean_version: string;               // e.g., "leanprover/lean4:v4.16.0"
-  mathlib_version: string;            // Git SHA or tag of Mathlib dependency
-  project_path: string;               // Relative path under data/lean-projects/
+  lean_version: string;
+  mathlib_version: string;
+  project_path: string;                // Relative path under data/lean-projects/
   lake_status: 'initializing' | 'ready' | 'building' | 'error';
-  last_build_output: string;          // stdout+stderr from last lake build
-  last_build_at: string | null;       // ISO 8601
+  last_build_output: string;
+  last_build_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -207,13 +183,91 @@ interface LeanSessionMeta {
 
 ---
 
+## C++ Integration
+
+C++ is a first-class session type. Two modes coexist in a single freeform C++ session:
+
+* **Single-file mode** — backed by `executeFile` in `execution.ts`. Compiles and runs `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <file> && ./a.out`. Used when the session has no `CMakeLists.txt`.
+* **CMake project mode** — backed by `cpp-build.ts`. Activated automatically when `CMakeLists.txt` exists in the session root. Configure → build → run pipeline with build flavors, sanitizers, parsed diagnostics, and artifact browsing.
+
+The mode is decided per-execute by `isCmakeProject()` (just `existsSync(<dir>/CMakeLists.txt)`), so a session can be promoted from single-file to CMake by simply adding a `CMakeLists.txt`.
+
+### clangd LSP
+
+Every freeform C++ session gets a clangd LSP server.
+
+* **Wrapper:** `cpp-lsp.ts` — spawns `clangd` with: `--background-index --clang-tidy --header-insertion=never --completion-style=detailed --pch-storage=memory --log=error`.
+* **Bootstrap config:** `cpp-project.ts` drops a default `.clangd` at the session root on session creation **and** every WebSocket connect (idempotent, so old sessions get one when reopened). The config sets `-std=c++20 -Wall -Wextra -Wpedantic -Wshadow`, points at `g++` for system headers, and enables `modernize-* / performance-* / bugprone-* / readability-*` clang-tidy checks.
+* **CMake integration:** when CMake configures a project, `cpp-build.ts` symlinks `build/<flavor>/compile_commands.json` to the project root so clangd picks up real per-file flags. (Falls back to copy if the filesystem doesn't support symlinks.)
+* **Document symbols:** the client requests `textDocument/documentSymbol`; results render in `OutlinePanel` as a tree (functions, classes, namespaces, ...).
+
+### CMake Build Pipeline (`cpp-build.ts`)
+
+A small wrapper around the `cmake` binary with structured output.
+
+* **Build flavors** — `BuildType` ∈ {`Debug`, `Release`, `RelWithDebInfo`, `MinSizeRel`} combined with optional `Sanitizer[]` ∈ {`asan`, `tsan`, `ubsan`, `msan`}. Combinations are validated (tsan can't combine with asan/msan; asan can't combine with msan; no duplicates). The flavor maps to a directory name like `Debug-asan-ubsan` under `build/`, so multiple flavors coexist.
+* **Generator detection** — uses Ninja if it's on `PATH`, otherwise lets cmake pick (Make on Linux).
+* **Configure** — `cmake -S <dir> -B <buildDir> -DCMAKE_BUILD_TYPE=<type> -DCMAKE_EXPORT_COMPILE_COMMANDS=ON [-DCMAKE_CXX_FLAGS=<sanitizer flags>]`. Caches: if `CMakeCache.txt` and `compile_commands.json` already exist, returns immediately unless `reconfigure: true`.
+* **Build** — `cmake --build <buildDir> -j<cpus> [--target <target>]`. ANSI color stripped from output (`CLICOLOR_FORCE=0`, `CMAKE_COLOR_DIAGNOSTICS=OFF`) to keep parsed diagnostics clean.
+* **Diagnostic parser** — a regex over GCC/Clang output (`file:line:col: severity: message`) producing structured `CompilerDiagnostic[]` with normalized relative paths. `fatal error` collapses to `error`. Continuation lines fold into the most recent diagnostic until a blank line.
+* **Run** — picks the produced binary (by name if `target` is specified, else first executable under `build/<flavor>/`) and runs it with optional `args`/`stdin`/`timeoutMs` (default 30s). SIGTERM with 2-second SIGKILL grace.
+* **Build persistence** — every `ensureBuilt` call inserts a `builds` row plus one `build_diagnostics` row per diagnostic. Successful runs additionally set `execution_runs.build_id` / `binary_path` / `flavor`.
+* **Cleanup** — `cleanFlavor` removes one `build/<flavor>/`; `cleanAll` removes the entire `build/` directory and any `compile_commands.json` symlink.
+
+### Build Artifact Browser
+
+`cpp-build.ts` exposes a tree view of `build/`:
+
+* **Classification** — files are tagged `executable` / `object` / `archive` / `shared_lib` / `compile_commands` / `cmake` / `text` / `binary` / `dir` based on extension and the executable bit.
+* **Limits** — at most 4000 entries walked; symlinks skipped to avoid escaping the build dir.
+* **Read** — `readArtifactText` returns up to 512 KB of text content; pretty-prints `compile_commands.json` when reading the canonical file.
+* **Download** — `download` endpoint streams arbitrary binaries with `Content-Disposition: attachment`.
+* **Path safety** — `resolveArtifactPath` rejects `..`, absolute paths, NUL bytes, and paths with > 32 segments.
+
+### Compiler Explorer (godbolt.org)
+
+`godbolt.ts` is a thin REST client for the public Compiler Explorer API. Used from the `CompilerExplorerPanel` to inspect generated assembly for a region of source.
+
+* `GET /api/godbolt/compilers?lang=c++` — list compilers (cached for 6h to avoid hammering the upstream).
+* `POST /api/godbolt/compile` — body `{ compilerId, source, userArguments?, filters? }`. 256 KB source cap, 20s upstream timeout. Returns the raw godbolt response (`code`, `asm[]`, `stdout[]`, `stderr[]`, ...).
+
+This is the only feature in Pyramid that calls an external network service. If offline, the panel surfaces the error gracefully; nothing else breaks.
+
+---
+
+## Notebook Sessions
+
+A third session type for Jupyter-style cell-by-cell Python execution.
+
+* **Storage** — the notebook is a single `.ipynb` file in the session working directory. The client (`NotebookEditor`) edits it as JSON; the server writes it via the file content endpoint. No special schema beyond the existing `session_files` row.
+* **Kernel bridge** — `notebook-kernel.ts` spawns a Python sidecar `jupyter-bridge.py` per session. The sidecar drives `ipykernel` in-process and speaks JSON-lines (`{type: 'ready'}`, execute requests, stream/display/error events) on stdin/stdout. Server relays these over WebSocket.
+* **WebSocket** — `ws://localhost:3007/ws/notebook/:sessionId`. Idle timeout 30 min after last disconnect.
+* **Lifecycle endpoints** — `GET /api/notebooks/:sessionId/kernel` (running flag), `POST /api/notebooks/:sessionId/kernel/stop` (force restart).
+
+`jupyter-bridge.py` is a plain Python file in `server/src/services/`; it is **copied** into `dist/services/` by `npm run build:server` so production runs work without source files.
+
+---
+
+## Terminal Sessions
+
+Freeform sessions (any language) get a PTY-backed shell tab in the right pane.
+
+* **PTY** — `terminal.ts` uses `node-pty` to spawn `$SHELL` with `cwd` set to the session directory. `xterm-256color`.
+* **WebSocket** — `ws://localhost:3007/ws/terminal/:sessionId/:tabId`. Multiple tabs per session (the `:tabId` lets the client pin a tab to a specific PTY).
+* **Scrollback** — last 256 KB kept in memory and replayed on reconnect.
+* **Idle timeout** — 30 minutes after last client disconnect.
+
+The terminal is **not** a session type; it's a panel that's always available on freeform sessions.
+
+---
+
 ## Other Session Types
 
 ### Freeform (Python/Julia/C++)
 
-Open-ended numerical/scientific experimentation. The user writes code, runs it, observes results. Used for SPDE simulations, ML experiments, algorithm exploration.
+Open-ended numerical/scientific experimentation. The user writes code, runs it, observes results. Used for SPDE simulations, ML experiments, algorithm exploration, C++ practice.
 
-Execution model: spawn a child process (`python3`, `julia`, or `g++ && ./a.out`), capture stdout/stderr, log the run. Simple spawn-and-exit, no long-lived process.
+Single-file execution model: spawn a child process (`python3`, `julia`, or `g++ && ./a.out`), capture stdout/stderr, log the run. C++ additionally supports the CMake pipeline above.
 
 ---
 
@@ -226,16 +280,16 @@ The fundamental data unit. A session is a timestamped workspace for a specific a
 ```
 interface Session {
   id: string;                          // UUID
-  title: string;                       // User-provided or auto-generated
-  session_type: 'lean' | 'freeform';
-  language: string;                    // 'lean' | 'python' | 'julia' | 'cpp'
+  title: string;
+  session_type: 'freeform' | 'lean' | 'notebook';
+  language: string;                    // 'python' | 'julia' | 'cpp' | 'lean'
   tags: string[];                      // JSON array stored as TEXT
   status: 'active' | 'paused' | 'completed' | 'archived';
-  links: SessionLink[];                // Cross-app references (see below)
+  links: SessionLink[];                // Cross-app references
   notes: string;                       // Markdown+LaTeX session notes
   working_dir: string;                 // Relative path under data/sessions/ or data/lean-projects/
   created_at: string;                  // ISO 8601
-  updated_at: string;                  // ISO 8601
+  updated_at: string;
 }
 ```
 
@@ -243,32 +297,61 @@ interface Session {
 
 ```
 interface SessionFile {
-  id: string;                          // UUID
-  session_id: string;                  // FK → sessions
-  filename: string;                    // e.g., "Main.lean", "main.py", "solution.cpp"
+  id: string;
+  session_id: string;
+  filename: string;                    // e.g., "Main.lean", "main.py", "notebook.ipynb", "src/order_book.cpp"
   file_type: 'source' | 'output' | 'plot' | 'data' | 'other';
-  language: string;                    // File language for syntax highlighting
-  is_primary: boolean;                 // The "main" file to execute/check
+  language: string;
+  is_primary: boolean;
   created_at: string;
   updated_at: string;
 }
 ```
 
-File content is stored on the filesystem, not in SQLite. The `session_files` table stores metadata only.
+File content is stored on the filesystem, not in SQLite. The `session_files` table stores metadata only. The session working directory supports nested folders (`files.ts` exposes folder create/rename/delete and a tree endpoint).
 
-### Execution Runs (freeform only)
+### Execution Runs
 
 ```
 interface ExecutionRun {
-  id: string;                          // UUID
-  session_id: string;                  // FK → sessions
-  file_id: string;                     // FK → session_files
-  command: string;                     // e.g., "python3 main.py"
-  exit_code: number | null;            // null if timed out/killed
+  id: string;
+  session_id: string;
+  file_id: string;
+  command: string;
+  exit_code: number | null;
   stdout: string;
   stderr: string;
   duration_ms: number;
-  created_at: string;                  // ISO 8601
+  created_at: string;
+  // CMake-only (nullable for single-file runs):
+  build_id: string | null;             // FK → builds.id
+  binary_path: string | null;
+  flavor: string | null;               // e.g., "Debug-asan"
+}
+```
+
+### Builds (C++ CMake)
+
+```
+interface Build {
+  id: string;
+  session_id: string;
+  flavor: string;                      // e.g., "Debug", "Release-tsan"
+  success: boolean;
+  duration_ms: number;
+  diagnostic_count: number;
+  log: string;                         // ANSI-stripped cmake/compiler output
+  created_at: string;
+}
+
+interface BuildDiagnostic {
+  id: string;
+  build_id: string;                    // FK → builds.id
+  file: string;                        // Relative to project root
+  line: number;
+  col: number;
+  severity: 'error' | 'warning' | 'note';
+  message: string;
 }
 ```
 
@@ -283,24 +366,19 @@ interface SessionLink {
 }
 ```
 
-Typical flows:
-* Reading a paper in Navigate → "try this" → creates a `lean` or `freeform` session with `app: 'navigate', ref_type: 'arxiv_id'`
-* Studying a textbook in Scribe → "formalize this" → creates a `lean` session with `app: 'scribe', ref_type: 'flowchart_node'`
-* Completing a session → log insight in Granary with `app: 'pyramid', ref_type: 'session_id'` (Granary side)
-
 ---
 
 ## Database Schema (`server/data/pyramid.db`)
 
-SQLite database created at runtime. WAL mode, foreign keys enabled.
+SQLite, WAL mode, foreign keys enabled. Created at runtime by `server/src/db.ts`.
 
 ```sql
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
-  session_type TEXT NOT NULL DEFAULT 'lean'
-    CHECK (session_type IN ('lean', 'freeform')),
-  language TEXT NOT NULL DEFAULT 'lean',
+  session_type TEXT NOT NULL DEFAULT 'freeform'
+    CHECK (session_type IN ('freeform', 'lean', 'notebook')),
+  language TEXT NOT NULL DEFAULT 'python',
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'paused', 'completed', 'archived')),
@@ -311,7 +389,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS session_files (
+CREATE TABLE session_files (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   filename TEXT NOT NULL,
@@ -324,7 +402,24 @@ CREATE TABLE IF NOT EXISTS session_files (
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS lean_session_meta (
+CREATE TABLE execution_runs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  exit_code INTEGER,
+  stdout TEXT NOT NULL DEFAULT '',
+  stderr TEXT NOT NULL DEFAULT '',
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  build_id TEXT,                       -- nullable; set for CMake runs only
+  binary_path TEXT,                    -- nullable
+  flavor TEXT,                         -- nullable; e.g., "Debug-asan"
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (file_id) REFERENCES session_files(id) ON DELETE CASCADE
+);
+
+CREATE TABLE lean_session_meta (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL UNIQUE,
   lean_version TEXT NOT NULL,
@@ -339,25 +434,39 @@ CREATE TABLE IF NOT EXISTS lean_session_meta (
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS execution_runs (
+CREATE TABLE builds (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
-  file_id TEXT NOT NULL,
-  command TEXT NOT NULL,
-  exit_code INTEGER,
-  stdout TEXT NOT NULL DEFAULT '',
-  stderr TEXT NOT NULL DEFAULT '',
+  flavor TEXT NOT NULL,
+  success INTEGER NOT NULL,
   duration_ms INTEGER NOT NULL DEFAULT 0,
+  diagnostic_count INTEGER NOT NULL DEFAULT 0,
+  log TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-  FOREIGN KEY (file_id) REFERENCES session_files(id) ON DELETE CASCADE
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS settings (
+CREATE TABLE build_diagnostics (
+  id TEXT PRIMARY KEY,
+  build_id TEXT NOT NULL,
+  file TEXT NOT NULL,
+  line INTEGER NOT NULL,
+  col INTEGER NOT NULL,
+  severity TEXT NOT NULL,
+  message TEXT NOT NULL,
+  FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
+);
+
+CREATE TABLE settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 ```
+
+**Migrations.** `db.ts` applies a couple of inline migrations:
+
+* Adds `build_id`, `binary_path`, `flavor` columns to `execution_runs` if missing (introspects `PRAGMA table_info`).
+* Rebuilds the `sessions` table when the `session_type` CHECK doesn't yet allow `'notebook'` (probes by attempting a rolled-back insert). When adding new session types, follow this probe-and-rebuild pattern instead of trying to alter the CHECK constraint in place.
 
 **Indices:**
 
@@ -365,41 +474,20 @@ CREATE TABLE IF NOT EXISTS settings (
 * `session_files.session_id`
 * `lean_session_meta.session_id` (UNIQUE)
 * `execution_runs.session_id`, `execution_runs.created_at`
+* `builds.session_id`, `builds.created_at`
+* `build_diagnostics.build_id`
 
-**JSON columns:** `tags`, `links` stored as JSON TEXT. Parse/serialize in route handlers. Same pattern as Navigate and Granary.
+**JSON columns:** `tags`, `links` stored as JSON TEXT. Parse/serialize in route handlers.
 
 ### Full-Text Search (FTS5)
 
 ```sql
-CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-  title,
-  notes,
-  tags,
-  content='sessions',
-  content_rowid='rowid'
+CREATE VIRTUAL TABLE sessions_fts USING fts5(
+  title, notes, tags, content='sessions', content_rowid='rowid'
 );
 ```
 
-Sync via triggers (same pattern as Granary's `entries_fts`):
-
-```sql
-CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
-  INSERT INTO sessions_fts(rowid, title, notes, tags)
-  VALUES (NEW.rowid, NEW.title, NEW.notes, NEW.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
-  INSERT INTO sessions_fts(sessions_fts, rowid, title, notes, tags)
-  VALUES ('delete', OLD.rowid, OLD.title, OLD.notes, OLD.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
-  INSERT INTO sessions_fts(sessions_fts, rowid, title, notes, tags)
-  VALUES ('delete', OLD.rowid, OLD.title, OLD.notes, OLD.tags);
-  INSERT INTO sessions_fts(rowid, title, notes, tags)
-  VALUES (NEW.rowid, NEW.title, NEW.notes, NEW.tags);
-END;
-```
+Sync via `sessions_ai` / `sessions_ad` / `sessions_au` triggers (same pattern as Granary's `entries_fts`).
 
 ---
 
@@ -412,93 +500,126 @@ All under `/api` prefix. RESTful verbs. Parameterized SQL only.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/sessions` | List sessions. Query params: `session_type`, `status`, `language`, `tag`, `search` (FTS5). |
-| GET | `/api/sessions/:id` | Get single session with files, type-specific data, and recent runs. |
-| POST | `/api/sessions` | Create session. For `lean`: scaffolds Lake project, runs `lake exe cache get`. |
-| PUT | `/api/sessions/:id` | Update session metadata (title, tags, notes, status, links). |
-| DELETE | `/api/sessions/:id` | Delete session, all associated data, and working directory. |
+| GET | `/api/sessions/:id` | Get single session with files, type-specific data, recent runs, absolute working dir. |
+| POST | `/api/sessions` | Create session. `lean` → scaffolds Lake project (background); `notebook` → seeds an empty `.ipynb`; `cpp` freeform → drops default `.clangd`. |
+| PUT | `/api/sessions/:id` | Update title, tags, notes, status, links, language. |
+| DELETE | `/api/sessions/:id` | Delete session, dependent rows, working directory; stops any LSP / kernel / terminal / Lean project. |
 | PATCH | `/api/sessions/:id/status` | Update status. |
 
-### Session Files
+### Session Files & Folders
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/sessions/:id/files` | List files in a session. |
+| GET | `/api/sessions/:id/files` | List file metadata. |
+| GET | `/api/sessions/:id/tree` | Recursive tree of files + folders under the session working dir. |
+| GET | `/api/sessions/:id/files/:fileId` | Get file metadata. |
 | GET | `/api/sessions/:id/files/:fileId/content` | Read file content from disk. |
-| POST | `/api/sessions/:id/files` | Create a new file. Body: `{ filename, language, content, is_primary? }`. |
+| POST | `/api/sessions/:id/files` | Create a file. Body: `{ filename, language, content?, is_primary? }`. `filename` may include subdirectories. |
+| PATCH | `/api/sessions/:id/files/:fileId` | Rename/move file (updates row + filesystem). |
 | PUT | `/api/sessions/:id/files/:fileId/content` | Update file content. Body: `{ content: string }`. |
 | DELETE | `/api/sessions/:id/files/:fileId` | Delete file from DB and disk. |
+| POST | `/api/sessions/:id/folders` | Create a folder. |
+| PATCH | `/api/sessions/:id/folders` | Rename a folder. |
+| DELETE | `/api/sessions/:id/folders` | Delete a folder. |
+| POST | `/api/sessions/:id/upload` | `multipart/form-data` upload (uses `multer`). |
 
-### Lean-Specific
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/lean/:sessionId/meta` | Get Lean session metadata (versions, lake status, last build). |
-| POST | `/api/lean/:sessionId/build` | Trigger `lake build`. Streams output via WebSocket or returns on completion. |
-| GET | `/api/lean/:sessionId/build-output` | Get last build stdout/stderr. |
-| WS | `/ws/lean/:sessionId` | WebSocket endpoint for LSP message relay. |
-
-### Execution (freeform only)
+### Execution & Runs
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/sessions/:id/runs` | List execution runs. Query params: `limit` (default 50). |
-| POST | `/api/sessions/:id/execute` | Execute file. Body: `{ file_id?, timeout_ms?, stdin? }`. |
-| GET | `/api/sessions/:id/runs/:runId` | Get single run with full output. |
+| GET | `/api/sessions/:id/runs` | List execution runs (default limit 50). |
+| GET | `/api/sessions/:id/runs/:runId` | Single run with full output. |
+| POST | `/api/sessions/:id/execute` | Execute. For C++ with `CMakeLists.txt`, takes the CMake path (body: `{ flavor, target?, args?, stdin?, reconfigure?, timeout_ms? }`); otherwise single-file path (body: `{ file_id?, timeout_ms?, stdin? }`). Response shape varies: single-file returns the run row; CMake returns `{ kind: 'ran' \| 'build_failed' \| 'no_binary', build_id, flavor, diagnostics, log, run? }`. |
+
+### CMake (C++ projects)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sessions/:id/cmake/status` | `{ is_cmake_project, project_path }`. |
+| POST | `/api/sessions/:id/cmake/configure` | Body: `{ flavor, reconfigure? }`. Runs cmake configure. |
+| POST | `/api/sessions/:id/cmake/build` | Body: `{ flavor, target?, jobs?, reconfigure? }`. Configures (if needed) and builds. Persists a `builds` row + diagnostics. |
+| GET | `/api/sessions/:id/cmake/builds` | Build history (default limit 50). |
+| GET | `/api/sessions/:id/cmake/builds/:buildId` | Single build with diagnostics. |
+| GET | `/api/sessions/:id/cmake/binaries` | List executables for a flavor. Query params: `buildType`, `sanitizers` (comma-separated). |
+| GET | `/api/sessions/:id/cmake/artifacts` | Tree of `build/` (classified by file kind). |
+| GET | `/api/sessions/:id/cmake/artifacts/content?path=<rel>` | Read text artifact (up to 512 KB; pretty-prints `compile_commands.json`). |
+| GET | `/api/sessions/:id/cmake/artifacts/download?path=<rel>` | Stream binary artifact as attachment. |
+| POST | `/api/sessions/:id/cmake/clean` | Body: `{ all: true }` removes everything; otherwise `{ flavor }` removes one flavor. |
+
+### Lean
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/lean/:sessionId/meta` | Lean session metadata (versions, lake status, last build). |
+| POST | `/api/lean/:sessionId/build` | Trigger `lake build`. |
+| GET | `/api/lean/:sessionId/build-output` | Last build stdout/stderr. |
+| WS | `/ws/lean/:sessionId` | LSP relay (browser ↔ `lean --server`). |
+
+### Notebooks
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/notebooks/:sessionId/kernel` | `{ running: boolean }`. |
+| POST | `/api/notebooks/:sessionId/kernel/stop` | Stop the kernel (next WS connect will start a fresh one). |
+| WS | `/ws/notebook/:sessionId` | Kernel relay (browser ↔ `jupyter-bridge.py`). |
+
+### C++ LSP & Terminal (WebSocket only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| WS | `/ws/cpp/:sessionId` | clangd LSP relay. Server gates on `session.language === 'cpp'`. Drops a `.clangd` config if missing. |
+| WS | `/ws/terminal/:sessionId/:tabId` | PTY relay for freeform sessions. Multiple tabs per session via distinct `:tabId`. |
+
+### Compiler Explorer
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/godbolt/compilers?lang=c++` | List compilers (cached 6h). |
+| POST | `/api/godbolt/compile` | Compile a snippet. Body: `{ compilerId, source, userArguments?, filters? }`. 256 KB source cap. |
 
 ### Claude AI
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/sessions/:id/claude/ask` | Send prompt with context to Claude. Body: `{ prompt, context: [{label, content}], mode }`. |
+| POST | `/api/sessions/:id/claude/ask` | Send prompt with context. Body: `{ prompt, context: [{label, content}], mode }`. |
 
 ### Scribe Proxy
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/scribe/flowcharts` | List Scribe flowcharts (proxied to Scribe at port 3003). |
-| GET | `/api/scribe/nodes/search?title=<query>` | Search Scribe nodes by title. |
-| GET | `/api/scribe/nodes/:flowchartId/:nodeKey` | Get a specific Scribe node. |
+| GET | `/api/scribe/flowcharts` | Proxied to Scribe (port 3003). |
+| GET | `/api/scribe/nodes/search?title=<query>` | Search Scribe nodes. |
+| GET | `/api/scribe/nodes/:flowchartId/:nodeKey` | Fetch a single Scribe node. |
 
-### Stats
+### Stats / Settings / Health
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/stats/overview` | Sessions by type, active count, total runs. |
 | GET | `/api/stats/heatmap` | Activity by date. Query params: `start`, `end`. |
 | GET | `/api/stats/languages` | Runs by language. |
-
-### Settings
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/settings` | Get all settings. |
-| GET | `/api/settings/:key` | Get single setting. |
-| PUT | `/api/settings/:key` | Set a setting. Body: `{ value: string }`. |
-
-### Health
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | `{ status: 'ok', timestamp: ... }` |
+| GET | `/api/settings` / `GET /api/settings/:key` / `PUT /api/settings/:key` | Key-value settings (incl. `claude_api_key`). |
+| GET | `/api/health` | `{ status: 'ok', timestamp }`. |
 
 ### Error Responses
 
-HTTP status codes: 201 (created), 400 (bad input), 404 (not found), 409 (conflict/duplicate), 500 (server error). Error body: `{ error: 'descriptive message' }`. Every route handler wrapped in try-catch.
+HTTP status codes: 201 (created), 400 (bad input), 404 (not found), 409 (conflict), 413 (payload too large — godbolt source cap), 500 (server error), 502 (upstream failure — Scribe / godbolt). Error body: `{ error: 'descriptive message' }`. Every route handler wrapped in try-catch.
 
 ---
 
-## Execution Service (freeform)
+## Execution Service (single-file)
 
-The execution service (`server/src/services/execution.ts`) spawns child processes for freeform sessions:
+`server/src/services/execution.ts` spawns child processes for single-file freeform runs:
 
-* **Isolation:** Each session has its own working directory. Code runs with `cwd` set to that directory.
-* **Timeout:** Default 30 seconds. Processes killed with SIGTERM then SIGKILL after 2-second grace period.
-* **Capture:** stdout and stderr captured via pipe. Truncated to 1MB each.
+* **Isolation:** each session has its own working directory; processes run with `cwd` set there.
+* **Timeout:** default 30 seconds (single-file) / 120 seconds (CMake). SIGTERM with 2-second SIGKILL grace.
+* **Capture:** stdout and stderr piped, truncated to 1 MB each.
 * **Language commands:**
   - Python: `python3 <file>`
   - Julia: `julia <file>`
-  - C++: `g++ -O2 -std=c++17 -o a.out <file> && ./a.out`
-* **No sandboxing:** Personal tool running locally.
+  - C++: `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <file> && ./a.out`
+  - Lean (one-off): `lake env lean <file>`
+* **No sandboxing:** personal tool running locally.
 
 ---
 
@@ -507,52 +628,75 @@ The execution service (`server/src/services/execution.ts`) spawns child processe
 | Path | Component | Description |
 |------|-----------|-------------|
 | `/` | `DashboardPage` | Overview: active sessions, recent activity, heatmap |
-| `/sessions` | `SessionListPage` | Browse/filter/search all sessions |
-| `/sessions/new` | `NewSessionPage` | Create session (pick type, language) |
+| `/sessions` | `SessionListPage` | Browse / filter / search all sessions |
+| `/sessions/new` | `NewSessionPage` | Create session (pick type — freeform / notebook / lean — and language) |
 | `/sessions/:id` | `SessionPage` | The main workbench (layout varies by session type) |
 
-### SessionPage (/sessions/:id) — Lean Mode
+### SessionPage — Lean Mode
 
-Split-pane layout:
+Resizable split-pane:
 
-* **Left pane: Editor** — CodeMirror 6 with Lean 4 syntax highlighting, Unicode input, inline diagnostics. File tabs for multi-file projects.
-* **Right pane tabs:**
-  - **Goal State** (default) — tactic goal state from `Lean/plainGoal`, updated on cursor move. Rendered with KaTeX. Shows "No goals" outside tactic blocks, "Proof complete ✓" when done.
-  - **Messages** — Lean info messages (`#check`, `#eval`, `#print` output).
-  - **Claude** — AI assistant panel with context auto-assembly, mode selection, and response rendering.
-  - **Notes** — Markdown+LaTeX session notes. Auto-saved with 1500ms debounce.
-  - **Links** — Cross-app references with add/remove management.
-* **Toolbar:** Build button (`lake build`), lake status indicator, session status. "Ask Claude" button appears when error diagnostics are present.
+* **Left:** CodeMirror 6 editor with Lean 4 syntax highlighting, Unicode input (`\forall` → `∀`, etc.), inline diagnostics. Symbol palette dropdown for tactile insertion.
+* **Right tabs:**
+  - **Goal State** (default) — `$/lean/plainGoal` rendered with KaTeX. Updates on cursor move. "No goals" / "Proof complete ✓".
+  - **Messages** — Lean info messages (`#check`, `#eval`, `#print`).
+  - **Claude** — AI assistant.
+  - **Notes** — Markdown+LaTeX. Auto-saved with 1500ms debounce.
+  - **Links** — Cross-app references.
+* **Toolbar:** Build button (`lake build`), lake status indicator, session status. "Ask Claude" appears when error diagnostics are present.
 
-### SessionPage (/sessions/:id) — Freeform Mode
+### SessionPage — Freeform Mode (Python / Julia / C++)
 
-Split-pane layout:
+Resizable split-pane with a vertical split inside the right pane (tabs on top, terminal on bottom).
 
-* **Left pane: Editor** — CodeMirror 6 with language-appropriate syntax highlighting. File tabs.
-* **Right pane tabs:**
-  - **Output** — stdout/stderr from latest run. Scrollable run history.
-  - **Claude** — AI assistant panel with context auto-assembly, mode selection, and response rendering.
+* **Left:** CodeMirror 6 editor with file-tab strip and (optional) `FileTree` for multi-file projects. C++ files get full clangd integration (diagnostics, hover, completion). Python files get `@codemirror/lang-python`.
+* **Right tabs (C++ shows the full set; other languages omit build/artifacts/outline/asm):**
+  - **Output** — stdout/stderr from the latest run; scrollable run history.
+  - **Build** (C++ CMake) — `BuildPanel`: flavor picker, target input, build button, parsed diagnostics list (clickable to file:line:col), build history.
+  - **Artifacts** (C++ CMake) — `ArtifactBrowser`: tree of `build/` with download / view-as-text.
+  - **Outline** (C++) — `OutlinePanel`: clangd document symbols as a tree.
+  - **Asm** (C++) — `CompilerExplorerPanel`: pick a godbolt compiler, view assembly for the current source.
+  - **Claude** — AI assistant.
   - **Notes** — Markdown+LaTeX session notes.
-  - **Links** — Cross-app references with add/remove management.
-* **Toolbar:** Run button, language indicator, session status. "Ask Claude" button appears when a run fails.
+  - **Links** — Cross-app references.
+* **Bottom of right pane:** `TerminalPane` (xterm.js) attached to the session's PTY, with multiple tab support.
+* **Toolbar:** Run button (CMake-aware in C++), language indicator, session status. "Ask Claude" appears when a run fails.
+
+### SessionPage — Notebook Mode
+
+* **Left:** `NotebookEditor` — cell list with code/markdown cells, per-cell run, output rendering (text/HTML/images), `FileTree` for ancillary files in the session directory. Auto-completion via `useNotebookKernel` calling into the kernel.
+* **Right tabs:** Claude / Notes / Links (same as other types). No goal state, no build, no terminal.
 
 ---
 
 ## Key Dependencies
 
-**Frontend:** React 18, Vite 6, TypeScript 5, KaTeX 0.16 (LaTeX rendering in goal state and notes), CodeMirror 6 (code editor — needs `@codemirror/lang-lean4` or custom Lean mode + Unicode input extension), Recharts (dashboard charts), date-fns, uuid
+**Frontend:**
 
-**Backend:** Express 4, TypeScript 5, better-sqlite3 11+, ws (WebSocket library for LSP bridge), cors, tsx (dev), child_process (Node.js built-in)
+* React 18, React Router 6, Vite 6, TypeScript 5
+* CodeMirror 6 — `codemirror`, `@codemirror/lang-cpp`, `@codemirror/lang-python`, `@codemirror/theme-one-dark`. Lean uses a hand-rolled CodeMirror language pack with Unicode input.
+* xterm.js — `@xterm/xterm`, `@xterm/addon-fit` (terminal panel).
+* KaTeX 0.16 (LaTeX rendering in goal state and notes).
+* Recharts (dashboard charts), date-fns, uuid.
+
+**Backend:**
+
+* Express 4, TypeScript 5, better-sqlite3 11+, ws (WebSocket), cors, tsx (dev).
+* `node-pty` — PTY-backed terminals. Native module; rebuilds on install.
+* `multer` — file uploads.
+* `child_process` (Node built-in) — language servers, kernels, build tools.
 
 **External tools (must be in PATH):**
-* `lean` — Lean 4 (via elan toolchain manager). Required for Lean sessions.
-* `lake` — Lake build system (bundled with Lean). Required for Lean sessions.
-* `python3` — for Python sessions
-* `julia` — for Julia sessions (optional)
-* `g++` — for C++ sessions
-* `git` — for Lake/Mathlib dependency management
 
-**Do NOT add:** Any ORM, any state management library beyond React hooks + prop drilling from App.tsx. No Jupyter kernel protocol. No LSP client library on the frontend — implement the minimal LSP JSON-RPC client directly (it's just JSON over WebSocket).
+* `lean` + `lake` — via [elan](https://github.com/leanprover/elan). Required for Lean sessions.
+* `clangd` — for C++ LSP.
+* `cmake` — for CMake C++ projects. `ninja` is auto-detected and preferred when present.
+* `g++` (with C++20 support) — for C++ single-file execution and as the clangd `--query-driver` reference.
+* `python3` with `ipykernel` — for notebook sessions and the jupyter bridge.
+* `julia` — optional, for Julia freeform sessions.
+* `git` — for Lake/Mathlib dependency management.
+
+**Do NOT add:** any ORM, any state management library beyond React hooks + prop drilling, an LSP client library on the frontend (the bridge is just JSON over WebSocket — implement the minimal client directly).
 
 ---
 
@@ -560,52 +704,48 @@ Split-pane layout:
 
 ### Code Style
 
-Follow the exact conventions from Navigate, Scribe, and Granary:
-
-* **TypeScript strict mode** in both client and server tsconfig
-* **Naming:** camelCase for variables/functions, PascalCase for components/interfaces/types, snake_case for database columns and table names, UPPER_CASE for constants
-* **Imports:** Named imports from libraries, relative paths for local files
-* **No linter or formatter config** — follow existing code style in each file
+* **TypeScript strict mode** in both client and server tsconfig.
+* **Naming:** camelCase for variables/functions, PascalCase for components/interfaces/types, snake_case for database columns and table names, UPPER_CASE for constants.
+* **Imports:** named imports from libraries, relative paths for local files.
+* **No linter or formatter config** — follow existing code style in each file.
 
 ### Component Structure
 
-Same as Scribe and Granary:
-
-* Each component in its own folder: `components/ComponentName/ComponentName.tsx` + `ComponentName.module.css`
-* Pages: `pages/PageName/PageName.tsx` + `PageName.module.css`
-* **CSS Modules** exclusively — no Tailwind
-* Design tokens as CSS custom properties in `global.css` under `:root` and `[data-theme="dark"]`
+* Each component in its own folder: `components/ComponentName/ComponentName.tsx` + `ComponentName.module.css`.
+* Pages: `pages/PageName/PageName.tsx` + `PageName.module.css`.
+* **CSS Modules** exclusively — no Tailwind.
+* Design tokens as CSS custom properties in `global.css` under `:root` and `[data-theme="dark"]`.
 
 ### Theming
 
-Two themes: light (default) and dark. Same mechanism as Scribe and Granary:
-
-* Toggle by setting `data-theme="dark"` on `document.documentElement`
-* Persist to localStorage (key: `pyramid_theme`)
-* Consume through `ThemeContext`
-* Use CSS custom properties everywhere
+Two themes: light (default) and dark. Toggle by setting `data-theme="dark"` on `document.documentElement`; persist to localStorage (`pyramid_theme`); consume through `ThemeContext`. Eight color schemes selectable via the theme menu. CSS custom properties everywhere.
 
 ### Service Layer
 
-Same pattern as Scribe and Granary:
-
-* Services are **plain objects** (not classes) exported as `const serviceName = { ... }`
-* Server-backed services are async, use `fetch()` for REST, `WebSocket` for LSP
-* Client-only services (theme, editor prefs) use localStorage
-* Services do NOT use React hooks; hooks wrap services
+* Services are **plain objects** (not classes) exported as `const serviceName = { ... }`.
+* Server-backed services are async, use `fetch()` for REST and `WebSocket` for LSP / kernel / terminal.
+* Client-only services (theme, editor prefs) use localStorage.
+* Services do NOT use React hooks; hooks wrap services.
 
 ### Server Conventions
 
-* Routes in `server/src/routes/` — one file per resource
-* Database schema and init in `server/src/db.ts`
-* JSON columns stored as TEXT, parsed/serialized in route handlers
-* CORS enabled (`*` origin) for LAN access from iPad and other devices
-* Parameterized SQL only
-* Route-level try-catch wrapping
+* Routes in `server/src/routes/` — one file per resource.
+* Database schema and init in `server/src/db.ts`. Inline migrations are introspect-and-alter; for CHECK constraints, probe-then-rebuild (see the `notebook` migration for the canonical pattern).
+* JSON columns stored as TEXT, parsed/serialized in route handlers.
+* CORS enabled (`*` origin) for LAN access from iPad and other devices.
+* Parameterized SQL only.
+* Route-level try-catch wrapping.
+* WebSocket upgrade routing lives in `server/src/index.ts` — match the path with a regex, validate the session type/language, then hand the socket to the appropriate service. Sockets are destroyed on validation failure.
+
+### LSP Conventions
+
+* **All shared LSP behavior lives in `lsp-bridge.ts`.** Wrappers (`lean-lsp.ts`, `cpp-lsp.ts`) only specify command/args/cwd/env and a `logPrefix`.
+* Don't interpret LSP messages in the bridge beyond `initialize` / `initialized` (caching + dedup). Routing logic and any LSP-specific message inspection belong on the client.
+* When adding a new LSP, add the wrapper and a new `/ws/<name>/:sessionId` upgrade handler — nothing else.
 
 ### LaTeX Rendering
 
-**KaTeX** for all math rendering (session notes, goal state panel). Same syntax as Scribe and Granary.
+**KaTeX** for all math rendering (session notes, goal state panel).
 
 ### Date Handling
 
@@ -613,7 +753,7 @@ Same pattern as Scribe and Granary:
 
 ### ID Generation
 
-`crypto.randomUUID()` for all IDs.
+`crypto.randomUUID()` (and `uuid.v4()` on the server) for all IDs.
 
 ---
 
@@ -623,7 +763,7 @@ Pyramid integrates with the Anthropic Claude API for AI-assisted coding and proo
 
 ### API Key Management
 
-The API key is stored in the `settings` table (key: `claude_api_key`). Users configure it via the Settings modal (gear icon in sidebar). The key is never exposed to the client — it is read server-side when making API calls.
+Stored in the `settings` table (`claude_api_key`). Configured via the Settings modal (gear icon in sidebar). Read server-side only — never sent to the client.
 
 ### Ask Endpoint
 
@@ -633,67 +773,72 @@ Body: { prompt: string, context: Array<{label, content}>, mode: ClaudeMode }
 Response: { response: string, input_tokens: number, output_tokens: number }
 ```
 
-The server reads the API key from settings, builds a system prompt based on the mode, assembles the context blocks into the user message, and calls the Anthropic Messages API (`claude-sonnet-4-20250514`).
+The server reads the API key, builds a system prompt for the mode, assembles context blocks into the user message, and calls the Anthropic Messages API.
 
-### System Prompt Modes
-
-Defined in `server/src/services/claude-prompts.ts`:
+### System Prompt Modes (`server/src/services/claude-prompts.ts`)
 
 | Mode | Description |
 |------|-------------|
-| `error_diagnosis` | Analyzes errors (Lean diagnostics or runtime errors). Separate prompts for Lean vs freeform. |
-| `formalization_help` | Helps translate informal math into Lean 4 proofs. Lean sessions only. |
-| `implementation_help` | Helps implement algorithms/methods. Freeform sessions only. |
+| `error_diagnosis` | Analyzes errors (Lean diagnostics, build diagnostics, runtime errors). Separate prompts for Lean vs C++ vs other. |
+| `formalization_help` | Translates informal math into Lean 4 proofs. Lean sessions only. |
+| `implementation_help` | Helps implement algorithms / methods. Freeform & notebook. |
 | `general` | Open-ended coding assistant. |
 
 ### Context Auto-Assembly (Client)
 
-The `ClaudePanel` component (`client/src/components/ClaudePanel/ClaudePanel.tsx`) automatically assembles context:
+`ClaudePanel` automatically assembles context:
 
 1. **Current file** — always included
-2. **Diagnostics** (Lean) — LSP error/warning messages
+2. **Diagnostics** — Lean LSP errors / clangd diagnostics / latest CMake build diagnostics
 3. **Goal state** (Lean) — current tactic goal
-4. **Last run output** (freeform) — stdout/stderr from failed runs
-5. **Scribe nodes** — fetched from linked Scribe flowchart nodes
-
-Users can also manually add Scribe nodes via a search picker.
+4. **Last run output** (freeform / notebook) — stdout/stderr from a failed run
+5. **Scribe nodes** — fetched from linked Scribe flowchart nodes (or added via search picker)
 
 ### Scribe Proxy
 
-Routes in `server/src/routes/scribe-proxy.ts` proxy requests to Scribe at `http://localhost:3003` with a 3-second timeout. Graceful degradation: if Scribe is not running, endpoints return empty results instead of errors.
+`server/src/routes/scribe-proxy.ts` proxies to Scribe at `http://localhost:3003` with a 3-second timeout. Graceful degradation: if Scribe is not running, endpoints return empty results.
 
 ---
 
 ## Testing
 
-No test framework configured. Validate changes by running `npm run build`.
+No test framework configured. Validate changes by running `npm run build` (which runs `tsc` for both client and server).
 
 ---
 
-## Adding a New Session Type
+## How-Tos
 
-1. Add to `session_type` CHECK constraint in `server/src/db.ts`
-2. Add to `SessionType` union in `client/src/types.ts`
-3. Add creation form variant in `NewSessionPage`
-4. Add type-specific tables in `server/src/db.ts` if needed
-5. Add type-specific tabs/panels in `SessionPage`
-6. Add type-specific routes in `server/src/routes/`
+### Adding a New Session Type
 
-## Adding a New Language (freeform)
+1. Add to `session_type` CHECK in `server/src/db.ts` and add a probe-and-rebuild migration block (see the `notebook` example).
+2. Add to `SessionType` union in `client/src/types.ts`.
+3. Add a creation form variant in `NewSessionPage`.
+4. Add type-specific tables in `server/src/db.ts` if needed.
+5. Add type-specific tabs/panels in `SessionPage`.
+6. Add type-specific routes in `server/src/routes/`.
 
-1. Add to execution service command map in `server/src/services/execution.ts`
-2. Add CodeMirror language mode in editor component
-3. Add to language selector in `NewSessionPage`
-4. Verify runtime availability (add startup check)
+### Adding a New Language Server
 
-## Adding a New API Endpoint
+1. Write a thin wrapper in `server/src/services/<lang>-lsp.ts` that calls into `LspBridge` (mirror `cpp-lsp.ts`).
+2. Add a `/ws/<lang>/:sessionId` upgrade handler in `server/src/index.ts`. Validate the session, then call the wrapper.
+3. Wire `forceStopAll()` of the new wrapper into the shutdown handler.
+4. On the client, write a `useXxxLsp` hook (mirror `useCppLsp.ts`) — JSON-RPC over WebSocket, no LSP client library.
 
-1. Create or edit route file in `server/src/routes/`
-2. Register in `server/src/index.ts`
-3. Add tables in `server/src/db.ts` if needed
+### Adding a New Language (single-file freeform)
 
-## Adding a New Page
+1. Add to the command map in `server/src/services/execution.ts`.
+2. Add a CodeMirror language mode in `CodeEditor`.
+3. Add to the language selector in `NewSessionPage`.
+4. Verify runtime availability (add a startup check if it's a hard dependency).
 
-1. Create `client/src/pages/NewPage/NewPage.tsx` + `NewPage.module.css`
-2. Add `<Route>` in `client/src/App.tsx`
-3. Add nav link in layout component
+### Adding a New API Endpoint
+
+1. Create or edit a route file in `server/src/routes/`.
+2. Register in `server/src/index.ts`.
+3. Add tables in `server/src/db.ts` if needed (with a migration if changing existing tables).
+
+### Adding a New Page
+
+1. Create `client/src/pages/NewPage/NewPage.tsx` + `NewPage.module.css`.
+2. Add `<Route>` in `client/src/App.tsx`.
+3. Add nav link in `Layout`.
