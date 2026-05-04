@@ -141,7 +141,47 @@ export const cppBuildService = {
   ): Promise<{ removed: boolean; scope: string }> {
     return api.post(`/sessions/${sessionId}/cmake/clean`, arg);
   },
+
+  artifactTree(sessionId: string): Promise<{ tree: ArtifactNode[] }> {
+    return api.get(`/sessions/${sessionId}/cmake/artifacts`);
+  },
+
+  artifactText(sessionId: string, relPath: string): Promise<ArtifactTextResult> {
+    return api.get(`/sessions/${sessionId}/cmake/artifacts/content?path=${encodeURIComponent(relPath)}`);
+  },
+
+  artifactDownloadUrl(sessionId: string, relPath: string): string {
+    return `/api/sessions/${sessionId}/cmake/artifacts/download?path=${encodeURIComponent(relPath)}`;
+  },
 };
+
+export type ArtifactKind =
+  | 'dir'
+  | 'executable'
+  | 'object'
+  | 'archive'
+  | 'shared_lib'
+  | 'compile_commands'
+  | 'cmake'
+  | 'text'
+  | 'binary';
+
+export interface ArtifactNode {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  kind: ArtifactKind;
+  childCount?: number;
+  children?: ArtifactNode[];
+}
+
+export interface ArtifactTextResult {
+  content: string;
+  truncated: boolean;
+  size: number;
+  kind: ArtifactKind;
+}
 
 export const FLAVOR_PRESETS: ReadonlyArray<{ id: string; label: string; flavor: BuildFlavor }> = [
   { id: 'Debug',                label: 'Debug',                  flavor: { buildType: 'Debug' } },

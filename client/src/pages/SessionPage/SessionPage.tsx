@@ -21,6 +21,7 @@ import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import BuildPanel from '../../components/BuildPanel/BuildPanel';
 import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
+import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import {
   cppBuildService,
   FLAVOR_PRESETS,
@@ -34,7 +35,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'outline' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
@@ -827,6 +828,14 @@ function SessionPage() {
                     )}
                   </button>
                 )}
+                {isCmakeProject && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'artifacts' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('artifacts')}
+                  >
+                    Artifacts
+                  </button>
+                )}
                 {isFreeformCpp && (
                   <button
                     className={`${styles.tab} ${activeTab === 'outline' ? styles.tabActive : ''}`}
@@ -1012,6 +1021,11 @@ function SessionPage() {
                   onDiagnosticClick={handleDiagnosticClick}
                 />
               </div>
+            )}
+
+            {/* CMake: Artifact browser */}
+            {activeTab === 'artifacts' && isCmakeProject && (
+              <ArtifactBrowser sessionId={id!} refreshKey={cmakeHistoryRefresh} />
             )}
 
             {/* Non-lean: Output */}

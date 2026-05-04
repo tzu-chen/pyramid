@@ -510,3 +510,204 @@ export function listBinaries(projectDir: string, flavor: BuildFlavor): string[] 
   const buildDir = path.join(projectDir, 'build', flavorDirName(flavor));
   return listExecutables(buildDir);
 }
+
+// ── Build artifact browser ──
+
+export type ArtifactKind =
+  | 'dir'
+  | 'executable'
+  | 'object'
+  | 'archive'
+  | 'shared_lib'
+  | 'compile_commands'
+  | 'cmake'
+  | 'text'
+  | 'binary';
+
+export interface ArtifactNode {
+  name: string;
+  path: string;        // POSIX path relative to <projectDir>/build
+  isDir: boolean;
+  size: number;        // 0 for dirs
+  kind: ArtifactKind;
+  childCount?: number; // dirs only
+  children?: ArtifactNode[];
+}
+
+const ARTIFACT_MAX_ENTRIES = 4000;
+const ARTIFACT_TEXT_MAX_BYTES = 512 * 1024;
+
+function classifyArtifact(name: string, isDir: boolean, mode: number): ArtifactKind {
+  if (isDir) return 'dir';
+  if (name === 'compile_commands.json') return 'compile_commands';
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.o') || lower.endsWith('.obj')) return 'object';
+  if (lower.endsWith('.a') || lower.endsWith('.lib')) return 'archive';
+  if (/\.(so|dylib|dll)(\.\d+)*$/i.test(name)) return 'shared_lib';
+  if (lower.endsWith('.json')) return 'text';
+  if (
+    lower === 'cmakecache.txt' ||
+    lower.endsWith('.cmake') ||
+    lower === 'cmakelists.txt' ||
+    lower.endsWith('.ninja') ||
+    lower === 'rules.ninja' ||
+    lower === 'build.ninja' ||
+    lower === 'makefile' ||
+    lower.endsWith('.make') ||
+    lower.endsWith('.depend') ||
+    lower.endsWith('.includecache')
+  ) return 'cmake';
+  if (
+    lower.endsWith('.txt') ||
+    lower.endsWith('.log') ||
+    lower.endsWith('.md') ||
+    lower.endsWith('.d') ||
+    lower.endsWith('.stamp') ||
+    lower.endsWith('.tlog')
+  ) return 'text';
+  // Treat anything with an executable bit and no recognized extension as a binary executable.
+  // (mode & 0o111) tests user/group/other execute bits.
+  if ((mode & 0o111) !== 0) return 'executable';
+  return 'binary';
+}
+
+export function listArtifactTree(projectDir: string): ArtifactNode[] {
+  const buildRoot = path.join(projectDir, 'build');
+  if (!fs.existsSync(buildRoot)) return [];
+
+  let count = 0;
+  const walk = (dir: string, relBase: string): ArtifactNode[] => {
+    if (count >= ARTIFACT_MAX_ENTRIES) return [];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    entries.sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    const out: ArtifactNode[] = [];
+    for (const ent of entries) {
+      if (count >= ARTIFACT_MAX_ENTRIES) break;
+      if (ent.name.startsWith('.')) continue;
+      const full = path.join(dir, ent.name);
+      const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
+      // Skip symlinks to avoid escaping the build dir.
+      if (stat.isSymbolicLink()) continue;
+      const isDir = stat.isDirectory();
+      const kind = classifyArtifact(ent.name, isDir, stat.mode);
+      count++;
+      if (isDir) {
+        const children = walk(full, rel);
+        out.push({
+          name: ent.name,
+          path: rel,
+          isDir: true,
+          size: 0,
+          kind,
+          childCount: children.length,
+          children,
+        });
+      } else if (stat.isFile()) {
+        out.push({
+          name: ent.name,
+          path: rel,
+          isDir: false,
+          size: stat.size,
+          kind,
+        });
+      }
+    }
+    return out;
+  };
+
+  return walk(buildRoot, '');
+}
+
+export function resolveArtifactPath(projectDir: string, relPath: string): string | null {
+  if (typeof relPath !== 'string') return null;
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (normalized.includes('\0')) return null;
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.some((s) => s === '..' || s === '.')) return null;
+  if (segments.length > 32) return null;
+  const buildRoot = path.resolve(projectDir, 'build');
+  const target = path.resolve(buildRoot, ...segments);
+  const rel = path.relative(buildRoot, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return target;
+}
+
+export interface ArtifactFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  kind: ArtifactKind;
+  isDir: boolean;
+}
+
+export function statArtifact(projectDir: string, relPath: string): ArtifactFileInfo | null {
+  const abs = resolveArtifactPath(projectDir, relPath);
+  if (!abs || !fs.existsSync(abs)) return null;
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(abs); } catch { return null; }
+  if (stat.isSymbolicLink()) return null;
+  const name = path.basename(abs);
+  return {
+    path: relPath.replace(/\\/g, '/').replace(/^\/+/, ''),
+    name,
+    size: stat.isFile() ? stat.size : 0,
+    kind: classifyArtifact(name, stat.isDirectory(), stat.mode),
+    isDir: stat.isDirectory(),
+  };
+}
+
+export interface ArtifactTextResult {
+  content: string;
+  truncated: boolean;
+  size: number;
+  kind: ArtifactKind;
+}
+
+export function readArtifactText(projectDir: string, relPath: string): ArtifactTextResult | null {
+  const info = statArtifact(projectDir, relPath);
+  if (!info || info.isDir) return null;
+  const abs = resolveArtifactPath(projectDir, relPath);
+  if (!abs) return null;
+  const fd = fs.openSync(abs, 'r');
+  try {
+    const buf = Buffer.alloc(Math.min(info.size, ARTIFACT_TEXT_MAX_BYTES));
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    const slice = buf.subarray(0, bytesRead);
+    // Pretty-print compile_commands.json if it's the canonical file.
+    if (info.kind === 'compile_commands' && bytesRead === info.size) {
+      try {
+        const parsed = JSON.parse(slice.toString('utf8'));
+        return {
+          content: JSON.stringify(parsed, null, 2),
+          truncated: false,
+          size: info.size,
+          kind: info.kind,
+        };
+      } catch {
+        // fall through to raw text
+      }
+    }
+    return {
+      content: slice.toString('utf8'),
+      truncated: info.size > bytesRead,
+      size: info.size,
+      kind: info.kind,
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}

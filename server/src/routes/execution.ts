@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import db from '../db.js';
 import { executeFile } from '../services/execution.js';
+import fs from 'fs';
 import {
   isCmakeProject,
   ensureBuilt,
@@ -15,6 +16,10 @@ import {
   cleanFlavor,
   cleanAll,
   listBinaries,
+  listArtifactTree,
+  resolveArtifactPath,
+  statArtifact,
+  readArtifactText,
   type BuildFlavor,
   type BuildResult,
   type CompilerDiagnostic,
@@ -371,6 +376,59 @@ router.get('/:id/cmake/binaries', (req: Request, res: Response) => {
     }
     const binaries = listBinaries(dir, flavor).map((p) => ({ path: p, name: path.basename(p) }));
     res.json({ flavor: flavorDirName(flavor), binaries });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cmake/artifacts
+router.get('/:id/cmake/artifacts', (req: Request, res: Response) => {
+  try {
+    const dir = loadSessionDir(req, res);
+    if (!dir) return;
+    res.json({ tree: listArtifactTree(dir) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cmake/artifacts/content?path=<rel>
+router.get('/:id/cmake/artifacts/content', (req: Request, res: Response) => {
+  try {
+    const dir = loadSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const result = readArtifactText(dir, rel);
+    if (!result) {
+      res.status(404).json({ error: 'Artifact not found or not readable' });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cmake/artifacts/download?path=<rel>
+router.get('/:id/cmake/artifacts/download', (req: Request, res: Response) => {
+  try {
+    const dir = loadSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const info = statArtifact(dir, rel);
+    if (!info || info.isDir) {
+      res.status(404).json({ error: 'Artifact not found' });
+      return;
+    }
+    const abs = resolveArtifactPath(dir, rel);
+    if (!abs) {
+      res.status(400).json({ error: 'Invalid artifact path' });
+      return;
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="${info.name.replace(/"/g, '')}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(info.size));
+    fs.createReadStream(abs).pipe(res);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
