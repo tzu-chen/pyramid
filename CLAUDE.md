@@ -44,56 +44,37 @@ Full-stack TypeScript: React 18 + Vite frontend, Express + SQLite backend. Same 
 
 ```
 pyramid/
-├── package.json              # Root scripts (concurrently for dev, install:all)
-├── client/                   # React frontend (Vite)
-│   ├── src/
-│   │   ├── main.tsx          # Entry point
-│   │   ├── App.tsx           # Routing, top-level layout
-│   │   ├── types.ts          # Shared TypeScript interfaces
-│   │   ├── styles/global.css # CSS custom properties (design tokens), reset, themes
-│   │   ├── components/
-│   │   │   ├── ArtifactBrowser/      # Tree view of build/ output (objects, binaries, compile_commands.json)
-│   │   │   ├── BuildPanel/           # CMake configure/build UI: flavor picker, diagnostics list, build history
-│   │   │   ├── ClaudePanel/          # Claude AI assistant panel
-│   │   │   ├── CodeEditor/           # CodeMirror 6 wrapper (Lean/C++/Python, LSP integration)
-│   │   │   ├── CompilerExplorerPanel/# godbolt.org integration: assembly view for selected source
-│   │   │   ├── CsvViewer/            # Tabular preview for .csv data files
-│   │   │   ├── FileTree/             # Multi-file directory browser (sessions with > 1 file)
-│   │   │   ├── GoalStatePanel/       # Lean tactic goal state, KaTeX-rendered
-│   │   │   ├── NotebookEditor/       # Jupyter-style cell editor + output renderer
-│   │   │   ├── OutlinePanel/         # Document symbols (clangd documentSymbol → tree)
-│   │   │   ├── SettingsModal/
-│   │   │   ├── SymbolPalette/        # Lean Unicode symbol picker
-│   │   │   └── TerminalPane/         # xterm.js front-end for the PTY WebSocket
-│   │   ├── pages/            # Route-level pages (Dashboard, SessionList, NewSession, SessionPage)
-│   │   ├── services/         # Data access layer (REST API + WebSocket clients)
-│   │   ├── hooks/            # useLeanLsp, useCppLsp, useNotebookKernel, useTerminal, useSession, ...
-│   │   └── contexts/         # Theme, editor font size
-│   └── vite.config.ts        # Vite config with /api and /ws proxy to port 3007
-└── server/                   # Express backend
-    ├── src/
-    │   ├── index.ts          # Express entry point, route mounts, WebSocket upgrade routing
-    │   ├── db.ts             # SQLite schema init + migrations
-    │   ├── routes/           # RESTful route handlers
-    │   └── services/         # Business logic
-    │       ├── lsp-bridge.ts       # Generic LSP-over-WebSocket relay (process lifecycle, framing, idle timeout, init caching)
-    │       ├── lean-lsp.ts         # Thin wrapper: spawns `lean --server` via lsp-bridge
-    │       ├── lean-project.ts     # Lake project scaffolding and build
-    │       ├── cpp-lsp.ts          # Thin wrapper: spawns `clangd` via lsp-bridge
-    │       ├── cpp-project.ts      # Drops a default `.clangd` into freeform C++ sessions
-    │       ├── cpp-build.ts        # CMake configure/build/run, diagnostic parser, artifact tree
-    │       ├── execution.ts        # Single-file Python/Julia/C++ child process runner
-    │       ├── notebook-kernel.ts  # Jupyter kernel lifecycle + WebSocket relay (via jupyter-bridge.py)
-    │       ├── jupyter-bridge.py   # Python sidecar that drives ipykernel and speaks JSON-lines to the server
-    │       ├── terminal.ts         # PTY-backed shell sessions (node-pty) for freeform sessions
-    │       ├── godbolt.ts          # Compiler Explorer (godbolt.org) REST client + compiler list cache
-    │       ├── claude.ts           # Claude API client (Anthropic Messages API)
-    │       ├── claude-prompts.ts   # System prompts for Claude modes
-    │       └── scribe.ts           # Scribe cross-app proxy client
-    └── data/                 # Runtime data (gitignored)
-        ├── pyramid.db        # SQLite database
-        ├── sessions/         # Freeform & notebook session working dirs (code, build/, outputs, .clangd, ...)
-        └── lean-projects/    # Lake projects (one per Lean session, with Mathlib cache)
+├── package.json
+├── client/src/
+│   ├── main.tsx, App.tsx, types.ts, styles/global.css
+│   ├── components/   # ArtifactBrowser, BuildPanel, ClaudePanel, CodeEditor (CodeMirror 6 + LSP),
+│   │                 # CompilerExplorerPanel, CsvViewer, FileTree, GoalStatePanel,
+│   │                 # NotebookEditor, OutlinePanel, SettingsModal, SymbolPalette, TerminalPane
+│   ├── pages/        # Dashboard, SessionList, NewSession, SessionPage
+│   ├── services/     # REST + WebSocket clients
+│   ├── hooks/        # useLeanLsp, useCppLsp, useNotebookKernel, useTerminal, useSession, ...
+│   └── contexts/     # Theme, editor font size
+│   (vite.config.ts proxies /api and /ws to port 3007)
+└── server/src/
+    ├── index.ts      # Express entry, route mounts, WebSocket upgrade routing
+    ├── db.ts         # SQLite schema + migrations
+    ├── routes/       # RESTful route handlers (one file per resource)
+    └── services/
+        ├── lsp-bridge.ts       # Generic LSP-over-WebSocket relay (lifecycle, framing, idle timeout, init caching)
+        ├── lean-lsp.ts         # Thin wrapper: spawns `lean --server` via lsp-bridge
+        ├── lean-project.ts     # Lake project scaffolding and build
+        ├── cpp-lsp.ts          # Thin wrapper: spawns `clangd` via lsp-bridge
+        ├── cpp-project.ts      # Drops default `.clangd` into freeform C++ sessions
+        ├── cpp-build.ts        # CMake configure/build/run, diagnostic parser, artifact tree
+        ├── execution.ts        # Single-file Python/Julia/C++ child process runner
+        ├── notebook-kernel.ts  # Jupyter kernel lifecycle + WS relay (via jupyter-bridge.py)
+        ├── jupyter-bridge.py   # Python sidecar driving ipykernel; speaks JSON-lines on stdio
+        ├── terminal.ts         # node-pty shell sessions for freeform sessions
+        ├── godbolt.ts          # Compiler Explorer REST client + compiler list cache
+        ├── claude.ts           # Claude API client (Anthropic Messages API)
+        ├── claude-prompts.ts   # System prompts for Claude modes
+        └── scribe.ts           # Scribe cross-app proxy client
+    (data/ holds pyramid.db, sessions/, lean-projects/ — gitignored)
 ```
 
 ### LSP Bridge (`lsp-bridge.ts`)
@@ -237,37 +218,27 @@ This is the only feature in Pyramid that calls an external network service. If o
 
 ## Notebook Sessions
 
-A third session type for Jupyter-style cell-by-cell Python execution.
+Jupyter-style cell-by-cell Python execution.
 
-* **Storage** — the notebook is a single `.ipynb` file in the session working directory. The client (`NotebookEditor`) edits it as JSON; the server writes it via the file content endpoint. No special schema beyond the existing `session_files` row.
-* **Kernel bridge** — `notebook-kernel.ts` spawns a Python sidecar `jupyter-bridge.py` per session. The sidecar drives `ipykernel` in-process and speaks JSON-lines (`{type: 'ready'}`, execute requests, stream/display/error events) on stdin/stdout. Server relays these over WebSocket.
-* **WebSocket** — `ws://localhost:3007/ws/notebook/:sessionId`. Idle timeout 30 min after last disconnect.
-* **Lifecycle endpoints** — `GET /api/notebooks/:sessionId/kernel` (running flag), `POST /api/notebooks/:sessionId/kernel/stop` (force restart).
-
-`jupyter-bridge.py` is a plain Python file in `server/src/services/`; it is **copied** into `dist/services/` by `npm run build:server` so production runs work without source files.
+* **Storage** — single `.ipynb` file in the session working dir; `NotebookEditor` edits it as JSON, server writes via the file content endpoint. No special schema beyond `session_files`.
+* **Kernel bridge** — `notebook-kernel.ts` spawns one `jupyter-bridge.py` per session. The sidecar drives `ipykernel` in-process and speaks JSON-lines (`{type: 'ready'}`, execute, stream/display/error) on stdio; server relays over WebSocket. Idle timeout 30 min.
+* **Lifecycle** — `GET /api/notebooks/:sessionId/kernel` (running flag), `POST .../kernel/stop` (force restart).
+* **Build:** `jupyter-bridge.py` is copied into `dist/services/` by `npm run build:server` so prod runs without source.
 
 ---
 
 ## Terminal Sessions
 
-Freeform sessions (any language) get a PTY-backed shell tab in the right pane.
+Freeform sessions get a PTY-backed shell tab in the right pane (not a session type — always available on freeform).
 
-* **PTY** — `terminal.ts` uses `node-pty` to spawn `$SHELL` with `cwd` set to the session directory. `xterm-256color`.
-* **WebSocket** — `ws://localhost:3007/ws/terminal/:sessionId/:tabId`. Multiple tabs per session (the `:tabId` lets the client pin a tab to a specific PTY).
-* **Scrollback** — last 256 KB kept in memory and replayed on reconnect.
-* **Idle timeout** — 30 minutes after last client disconnect.
-
-The terminal is **not** a session type; it's a panel that's always available on freeform sessions.
+* **PTY** — `terminal.ts` uses `node-pty` to spawn `$SHELL` with `cwd=session dir`, `xterm-256color`.
+* **WS** — `/ws/terminal/:sessionId/:tabId` (multiple tabs per session via distinct `:tabId`). 256 KB scrollback replayed on reconnect. 30-min idle timeout.
 
 ---
 
-## Other Session Types
+## Freeform Sessions (Python/Julia/C++)
 
-### Freeform (Python/Julia/C++)
-
-Open-ended numerical/scientific experimentation. The user writes code, runs it, observes results. Used for SPDE simulations, ML experiments, algorithm exploration, C++ practice.
-
-Single-file execution model: spawn a child process (`python3`, `julia`, or `g++ && ./a.out`), capture stdout/stderr, log the run. C++ additionally supports the CMake pipeline above.
+Open-ended numerical/scientific experimentation (SPDE simulations, ML experiments, algorithm exploration, C++ practice). Single-file execution model: spawn a child process (`python3`, `julia`, or `g++ && ./a.out`), capture stdout/stderr, log the run. C++ additionally supports the CMake pipeline above.
 
 ---
 
@@ -370,124 +341,15 @@ interface SessionLink {
 
 ## Database Schema (`server/data/pyramid.db`)
 
-SQLite, WAL mode, foreign keys enabled. Created at runtime by `server/src/db.ts`.
+SQLite, WAL mode, foreign keys enabled. Created at runtime by `server/src/db.ts`. Tables mirror the TypeScript interfaces above (snake_case columns, `TEXT` ISO-8601 timestamps, `TEXT` UUID primary keys, JSON columns stored as TEXT). Tables: `sessions` (CHECK `session_type IN ('freeform','lean','notebook')`, CHECK `status IN ('active','paused','completed','archived')`), `session_files` (CHECK `file_type IN ('source','output','plot','data','other')`, FK→sessions CASCADE), `execution_runs` (FK→sessions CASCADE, FK→session_files CASCADE; nullable `build_id`/`binary_path`/`flavor` for CMake runs), `lean_session_meta` (UNIQUE `session_id`, CHECK `lake_status IN ('initializing','ready','building','error')`), `builds` (FK→sessions CASCADE), `build_diagnostics` (FK→builds CASCADE), `settings` (key/value).
 
-```sql
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  session_type TEXT NOT NULL DEFAULT 'freeform'
-    CHECK (session_type IN ('freeform', 'lean', 'notebook')),
-  language TEXT NOT NULL DEFAULT 'python',
-  tags TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'paused', 'completed', 'archived')),
-  links TEXT NOT NULL DEFAULT '[]',
-  notes TEXT NOT NULL DEFAULT '',
-  working_dir TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
+**Migrations.** `db.ts` applies inline migrations: introspect-and-add columns via `PRAGMA table_info` (added `build_id`/`binary_path`/`flavor` to `execution_runs`); probe-and-rebuild for CHECK constraint changes (used to add `'notebook'` to `session_type` — attempt a rolled-back insert to detect old CHECK, then rename/recreate/copy). Use the probe-and-rebuild pattern for any future CHECK constraint changes.
 
-CREATE TABLE session_files (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  filename TEXT NOT NULL,
-  file_type TEXT NOT NULL DEFAULT 'source'
-    CHECK (file_type IN ('source', 'output', 'plot', 'data', 'other')),
-  language TEXT NOT NULL DEFAULT '',
-  is_primary INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
-CREATE TABLE execution_runs (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  file_id TEXT NOT NULL,
-  command TEXT NOT NULL,
-  exit_code INTEGER,
-  stdout TEXT NOT NULL DEFAULT '',
-  stderr TEXT NOT NULL DEFAULT '',
-  duration_ms INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  build_id TEXT,                       -- nullable; set for CMake runs only
-  binary_path TEXT,                    -- nullable
-  flavor TEXT,                         -- nullable; e.g., "Debug-asan"
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-  FOREIGN KEY (file_id) REFERENCES session_files(id) ON DELETE CASCADE
-);
-
-CREATE TABLE lean_session_meta (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL UNIQUE,
-  lean_version TEXT NOT NULL,
-  mathlib_version TEXT NOT NULL DEFAULT '',
-  project_path TEXT NOT NULL,
-  lake_status TEXT NOT NULL DEFAULT 'initializing'
-    CHECK (lake_status IN ('initializing', 'ready', 'building', 'error')),
-  last_build_output TEXT NOT NULL DEFAULT '',
-  last_build_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
-CREATE TABLE builds (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  flavor TEXT NOT NULL,
-  success INTEGER NOT NULL,
-  duration_ms INTEGER NOT NULL DEFAULT 0,
-  diagnostic_count INTEGER NOT NULL DEFAULT 0,
-  log TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
-CREATE TABLE build_diagnostics (
-  id TEXT PRIMARY KEY,
-  build_id TEXT NOT NULL,
-  file TEXT NOT NULL,
-  line INTEGER NOT NULL,
-  col INTEGER NOT NULL,
-  severity TEXT NOT NULL,
-  message TEXT NOT NULL,
-  FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
-);
-
-CREATE TABLE settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-```
-
-**Migrations.** `db.ts` applies a couple of inline migrations:
-
-* Adds `build_id`, `binary_path`, `flavor` columns to `execution_runs` if missing (introspects `PRAGMA table_info`).
-* Rebuilds the `sessions` table when the `session_type` CHECK doesn't yet allow `'notebook'` (probes by attempting a rolled-back insert). When adding new session types, follow this probe-and-rebuild pattern instead of trying to alter the CHECK constraint in place.
-
-**Indices:**
-
-* `sessions.session_type`, `sessions.status`, `sessions.created_at`
-* `session_files.session_id`
-* `lean_session_meta.session_id` (UNIQUE)
-* `execution_runs.session_id`, `execution_runs.created_at`
-* `builds.session_id`, `builds.created_at`
-* `build_diagnostics.build_id`
+**Indices:** `sessions(session_type|status|created_at)`, `session_files(session_id)`, `lean_session_meta(session_id)` UNIQUE, `execution_runs(session_id|created_at)`, `builds(session_id|created_at)`, `build_diagnostics(build_id)`.
 
 **JSON columns:** `tags`, `links` stored as JSON TEXT. Parse/serialize in route handlers.
 
-### Full-Text Search (FTS5)
-
-```sql
-CREATE VIRTUAL TABLE sessions_fts USING fts5(
-  title, notes, tags, content='sessions', content_rowid='rowid'
-);
-```
-
-Sync via `sessions_ai` / `sessions_ad` / `sessions_au` triggers (same pattern as Granary's `entries_fts`).
+**FTS5:** `sessions_fts(title, notes, tags, content='sessions', content_rowid='rowid')` synced via `sessions_ai` / `sessions_ad` / `sessions_au` triggers (same pattern as Granary's `entries_fts`).
 
 ---
 
