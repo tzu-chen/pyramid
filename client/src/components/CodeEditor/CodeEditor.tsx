@@ -1,7 +1,7 @@
-import { useEffect, useRef, useCallback, MutableRefObject } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo, MutableRefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
-import { EditorState, Extension, Compartment, Prec } from '@codemirror/state';
-import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip } from '@codemirror/view';
+import { EditorState, Extension, Compartment, Prec, StateField, StateEffect } from '@codemirror/state';
+import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip, Decoration, DecorationSet } from '@codemirror/view';
 import { python, pythonLanguage, localCompletionSource, globalCompletion } from '@codemirror/lang-python';
 import { cpp, cppLanguage } from '@codemirror/lang-cpp';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
@@ -177,6 +177,59 @@ function unicodeInputExtension(): Extension {
   });
 }
 
+// --- Search Highlight Extension ---
+
+const setSearchHighlights = StateEffect.define<{
+  matches: { from: number; to: number }[];
+  active: number;
+}>();
+
+const searchMatchMark = Decoration.mark({ class: 'cm-search-match' });
+const searchMatchActiveMark = Decoration.mark({ class: 'cm-search-match-active' });
+
+const searchHighlightField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setSearchHighlights)) {
+        const { matches, active } = e.value;
+        const ranges = matches.map((m, i) =>
+          (i === active ? searchMatchActiveMark : searchMatchMark).range(m.from, m.to)
+        );
+        deco = Decoration.set(ranges, true);
+      }
+    }
+    return deco;
+  },
+  provide: f => EditorView.decorations.from(f),
+});
+
+const searchTheme = EditorView.theme({
+  '.cm-search-match': {
+    backgroundColor: 'rgba(255, 213, 79, 0.4)',
+    outline: '1px solid rgba(255, 167, 38, 0.6)',
+  },
+  '.cm-search-match-active': {
+    backgroundColor: 'rgba(255, 152, 0, 0.55)',
+    outline: '1px solid rgba(230, 81, 0, 0.85)',
+  },
+});
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+interface SearchMatch {
+  line: number;
+  text: string;
+  from: number;
+  to: number;
+}
+
+const SEARCH_MATCH_HARD_CAP = 1000;
+const SEARCH_LIST_DISPLAY_CAP = 50;
+
 // --- LSP Diagnostics Extension ---
 
 export interface LspDiagnostic {
@@ -263,6 +316,11 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   const fontSizeCompartment = useRef(new Compartment());
   const vimCompartment = useRef(new Compartment());
   const fontSizeRef = useRef(fontSize);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const activeMatchItemRef = useRef<HTMLLIElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matches, setMatches] = useState<SearchMatch[]>([]);
+  const [activeMatch, setActiveMatch] = useState(0);
   const { scheme } = useTheme();
   const { vimMode } = useEditorVimMode();
   const vimModeRef = useRef(vimMode);
@@ -282,10 +340,28 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       viewRef.current.destroy();
     }
 
+    const focusSearchKeymap = Prec.highest(keymap.of([
+      {
+        key: 'Mod-f',
+        run: () => {
+          const el = searchInputRef.current;
+          if (el) {
+            el.focus();
+            el.select();
+            return true;
+          }
+          return false;
+        },
+      },
+    ]));
+
     const extensions: Extension[] = [
       vimCompartment.current.of(vimModeRef.current ? vim() : []),
       basicSetup,
+      focusSearchKeymap,
       tabKeymap,
+      searchHighlightField,
+      searchTheme,
       getLanguageExtension(language),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -531,7 +607,164 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
     }
   }, [value]);
 
-  return <div ref={containerRef} className={styles.editor} />;
+  // Recompute matches whenever the query or document text changes
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (!searchQuery) {
+      setMatches([]);
+      setActiveMatch(0);
+      return;
+    }
+    const text = view.state.doc.toString();
+    const re = new RegExp(escapeRegex(searchQuery), 'gi');
+    const found: SearchMatch[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      const lineInfo = view.state.doc.lineAt(m.index);
+      found.push({
+        line: lineInfo.number,
+        text: lineInfo.text,
+        from: m.index,
+        to: m.index + m[0].length,
+      });
+      if (found.length >= SEARCH_MATCH_HARD_CAP) break;
+    }
+    setMatches(found);
+    setActiveMatch(prev => (prev >= found.length ? 0 : prev));
+  }, [searchQuery, value]);
+
+  // Push decoration updates and scroll the active match into view
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: setSearchHighlights.of({
+        matches: matches.map(m => ({ from: m.from, to: m.to })),
+        active: activeMatch,
+      }),
+    });
+    if (matches.length > 0 && activeMatch >= 0 && activeMatch < matches.length) {
+      const m = matches[activeMatch];
+      view.dispatch({ effects: EditorView.scrollIntoView(m.from, { y: 'center' }) });
+    }
+  }, [matches, activeMatch]);
+
+  // Keep the active item visible inside the match list as it changes
+  useEffect(() => {
+    activeMatchItemRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeMatch]);
+
+  const stepMatch = useCallback((delta: number) => {
+    setActiveMatch(prev => {
+      if (matches.length === 0) return 0;
+      return ((prev + delta) % matches.length + matches.length) % matches.length;
+    });
+  }, [matches.length]);
+
+  const jumpToMatch = useCallback((i: number) => {
+    const view = viewRef.current;
+    if (!view || i < 0 || i >= matches.length) return;
+    const m = matches[i];
+    view.dispatch({
+      selection: { anchor: m.from, head: m.to },
+      effects: EditorView.scrollIntoView(m.from, { y: 'center' }),
+    });
+    setActiveMatch(i);
+    view.focus();
+  }, [matches]);
+
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      stepMatch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setSearchQuery('');
+      viewRef.current?.focus();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      stepMatch(1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      stepMatch(-1);
+    }
+  }, [stepMatch]);
+
+  const visibleMatches = useMemo(
+    () => matches.slice(0, SEARCH_LIST_DISPLAY_CAP),
+    [matches],
+  );
+
+  return (
+    <div className={styles.wrapper}>
+      <div ref={containerRef} className={styles.editor} />
+      <div className={styles.searchBar}>
+        <div className={styles.searchBarRow}>
+          <input
+            ref={searchInputRef}
+            className={styles.searchInput}
+            type="text"
+            placeholder="Search (Ctrl+F) — Enter / Shift+Enter to step, Esc to clear"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            spellCheck={false}
+          />
+          <span className={styles.searchCounter}>
+            {searchQuery
+              ? matches.length === 0
+                ? 'No matches'
+                : `${activeMatch + 1} / ${matches.length}${matches.length >= SEARCH_MATCH_HARD_CAP ? '+' : ''}`
+              : ''}
+          </span>
+          <button
+            type="button"
+            className={styles.searchBtn}
+            onClick={() => stepMatch(-1)}
+            disabled={matches.length === 0}
+            title="Previous match (Shift+Enter)"
+          >↑</button>
+          <button
+            type="button"
+            className={styles.searchBtn}
+            onClick={() => stepMatch(1)}
+            disabled={matches.length === 0}
+            title="Next match (Enter)"
+          >↓</button>
+          <button
+            type="button"
+            className={styles.searchBtn}
+            onClick={() => { setSearchQuery(''); viewRef.current?.focus(); }}
+            disabled={!searchQuery}
+            title="Clear (Esc)"
+          >×</button>
+        </div>
+        {searchQuery && matches.length > 0 && (
+          <ul className={styles.matchList}>
+            {visibleMatches.map((m, i) => (
+              <li
+                key={`${m.from}-${i}`}
+                ref={i === activeMatch ? activeMatchItemRef : undefined}
+                className={`${styles.matchItem} ${i === activeMatch ? styles.matchItemActive : ''}`}
+                onClick={() => jumpToMatch(i)}
+                title={m.text}
+              >
+                <span className={styles.matchLine}>L{m.line}</span>
+                <span className={styles.matchText}>{m.text}</span>
+              </li>
+            ))}
+            {matches.length > SEARCH_LIST_DISPLAY_CAP && (
+              <li className={styles.matchOverflow}>
+                … {matches.length - SEARCH_LIST_DISPLAY_CAP} more match{matches.length - SEARCH_LIST_DISPLAY_CAP === 1 ? '' : 'es'}
+              </li>
+            )}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default CodeEditor;
