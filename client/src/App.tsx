@@ -4,6 +4,7 @@ import DashboardPage from './pages/DashboardPage/DashboardPage';
 import SessionListPage from './pages/SessionListPage/SessionListPage';
 import NewSessionPage from './pages/NewSessionPage/NewSessionPage';
 import SessionPage from './pages/SessionPage/SessionPage';
+import InfoPage from './pages/InfoPage/InfoPage';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
         <Route path="/sessions" element={<SessionListPage />} />
         <Route path="/sessions/new" element={<NewSessionPage />} />
         <Route path="/sessions/:id" element={<SessionPage />} />
+        <Route path="/info" element={<InfoPage />} />
       </Routes>
     </Layout>
   );

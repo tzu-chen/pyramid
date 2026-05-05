@@ -4,8 +4,8 @@ import SettingsModal from '../SettingsModal/SettingsModal';
 import {
   ChevronLeftIcon,
   GridIcon,
+  InfoIcon,
   ListIcon,
-  PlusIcon,
   SettingsIcon,
 } from '../Icons/Icons';
 import styles from './Layout.module.css';
@@ -52,9 +52,9 @@ function Layout({ children }: LayoutProps) {
             <ListIcon size={18} />
             <span className={styles.navLabel}>Sessions</span>
           </NavLink>
-          <NavLink to="/sessions/new" className={navLinkClass} title="New Session">
-            <PlusIcon size={18} />
-            <span className={styles.navLabel}>New Session</span>
+          <NavLink to="/info" className={navLinkClass} title="Info">
+            <InfoIcon size={18} />
+            <span className={styles.navLabel}>Info</span>
           </NavLink>
         </nav>
         <div className={styles.sidebarFooter}>

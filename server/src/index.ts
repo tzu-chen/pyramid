@@ -15,6 +15,7 @@ import claudeRouter from './routes/claude.js';
 import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
 import godboltRouter from './routes/godbolt.js';
+import backendsRouter from './routes/backends.js';
 import { leanLsp } from './services/lean-lsp.js';
 import { cppLsp } from './services/cpp-lsp.js';
 import { cppProject } from './services/cpp-project.js';
@@ -38,6 +39,7 @@ app.use('/api/sessions', claudeRouter);
 app.use('/api/scribe', scribeProxyRouter);
 app.use('/api/notebooks', notebooksRouter);
 app.use('/api/godbolt', godboltRouter);
+app.use('/api/backends', backendsRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
