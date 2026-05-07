@@ -16,6 +16,7 @@ import GoalStatePanel from '../../components/GoalStatePanel/GoalStatePanel';
 import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
+import FileTabs from '../../components/FileTabs/FileTabs';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
@@ -34,7 +35,7 @@ import {
 } from '../../services/cppBuildService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { ExecutionRun, SessionFile, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
+import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
 type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'claude' | 'notes' | 'links';
@@ -53,6 +54,7 @@ function SessionPage() {
   const { session, loading, error, refresh } = useSession(id);
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const [openFileIds, setOpenFileIds] = useState<string[]>([]);
   const [fileContent, setFileContent] = useState('');
   const [activeTab, setActiveTab] = useState<NonLeanTab | LeanTab>('output');
   const [notes, setNotes] = useState('');
@@ -163,6 +165,9 @@ function SessionPage() {
     if (session?.files && session.files.length > 0) {
       const primary = session.files.find(f => f.is_primary) || session.files[0];
       setActiveFileId(primary.id);
+      // Lean sessions have no file tree, so the tab strip is the only way to
+      // switch files — auto-open all of them. Other types open files on click.
+      setOpenFileIds(session.session_type === 'lean' ? session.files.map(f => f.id) : [primary.id]);
       setNotes(session.notes);
       prevNotesRef.current = session.notes;
       setRuns(session.runs || []);
@@ -183,6 +188,38 @@ function SessionPage() {
       }
     }
   }, [session?.id]);
+
+  // Open a file as a tab. If already open, just activate it; otherwise append.
+  const openFile = useCallback((fileId: string) => {
+    setOpenFileIds((prev) => (prev.includes(fileId) ? prev : [...prev, fileId]));
+    setActiveFileId(fileId);
+  }, []);
+
+  // Close a tab. If it was the active tab, fall back to the neighbor.
+  const closeFile = useCallback((fileId: string) => {
+    setOpenFileIds((prev) => {
+      const idx = prev.indexOf(fileId);
+      if (idx === -1) return prev;
+      const next = prev.filter((id) => id !== fileId);
+      setActiveFileId((curr) => {
+        if (curr !== fileId) return curr;
+        if (next.length === 0) return null;
+        return next[Math.min(idx, next.length - 1)];
+      });
+      return next;
+    });
+  }, []);
+
+  // Drop tabs whose files no longer exist (e.g. after delete).
+  useEffect(() => {
+    if (!session?.files) return;
+    const existing = new Set(session.files.map((f) => f.id));
+    setOpenFileIds((prev) => {
+      const filtered = prev.filter((id) => existing.has(id));
+      return filtered.length === prev.length ? prev : filtered;
+    });
+    setActiveFileId((curr) => (curr && !existing.has(curr) ? null : curr));
+  }, [session?.files]);
 
   // Load file content
   useEffect(() => {
@@ -440,11 +477,11 @@ function SessionPage() {
       ?? session.files.find(f => d.file.endsWith('/' + f.filename));
     if (target && target.id !== activeFileId) {
       pendingJumpRef.current = { line: d.line, column: d.column };
-      setActiveFileId(target.id);
+      openFile(target.id);
     } else {
       onJumpRef.current?.(d.line, d.column);
     }
-  }, [session?.files, activeFileId]);
+  }, [session?.files, activeFileId, openFile]);
 
   const handleBuild = async () => {
     if (!id || building) return;
@@ -694,7 +731,7 @@ function SessionPage() {
                     sessionId={id!}
                     files={session.files}
                     activeFileId={activeFileId}
-                    onSelectFile={setActiveFileId}
+                    onSelectFile={openFile}
                     onFilesChanged={refresh}
                     sessionLanguage={session.language}
                   />
@@ -710,47 +747,52 @@ function SessionPage() {
                 </button>
               )}
               <div className={styles.editorContainer}>
-                {activeFileExt === 'ipynb' ? (
-                  <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
-                ) : activeFileExt === 'csv' ? (
-                  <CsvViewer sessionId={id!} fileId={activeFileId} />
-                ) : (
-                  <CodeEditor
-                    value={fileContent}
-                    language={activeFile?.language || ''}
-                    onChange={handleSaveFile}
-                    fontSize={fontSize}
-                    onInsertRef={insertRef}
-                  />
-                )}
+                <FileTabs
+                  files={session.files}
+                  openFileIds={openFileIds}
+                  activeFileId={activeFileId}
+                  onSelect={setActiveFileId}
+                  onClose={closeFile}
+                />
+                <div className={styles.editorBody}>
+                  {activeFileExt === 'ipynb' ? (
+                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+                  ) : activeFileExt === 'csv' ? (
+                    <CsvViewer sessionId={id!} fileId={activeFileId} />
+                  ) : (
+                    <CodeEditor
+                      value={fileContent}
+                      language={activeFile?.language || ''}
+                      onChange={handleSaveFile}
+                      fontSize={fontSize}
+                      onInsertRef={insertRef}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           ) : isLean ? (
             <>
-              {session.files.length > 1 && (
-                <div className={styles.fileTabs}>
-                  {session.files.map((f: SessionFile) => (
-                    <button
-                      key={f.id}
-                      className={`${styles.fileTab} ${activeFileId === f.id ? styles.fileTabActive : ''}`}
-                      onClick={() => setActiveFileId(f.id)}
-                    >
-                      {f.filename}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <FileTabs
+                files={session.files}
+                openFileIds={openFileIds}
+                activeFileId={activeFileId}
+                onSelect={setActiveFileId}
+                onClose={closeFile}
+              />
               <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
               <div className={styles.editorContainer}>
-                <CodeEditor
-                  value={fileContent}
-                  language={session.language}
-                  onChange={handleSaveFile}
-                  onCursorChange={handleCursorChange}
-                  diagnostics={lsp.diagnostics}
-                  fontSize={fontSize}
-                  onInsertRef={insertRef}
-                />
+                <div className={styles.editorBody}>
+                  <CodeEditor
+                    value={fileContent}
+                    language={session.language}
+                    onChange={handleSaveFile}
+                    onCursorChange={handleCursorChange}
+                    diagnostics={lsp.diagnostics}
+                    fontSize={fontSize}
+                    onInsertRef={insertRef}
+                  />
+                </div>
               </div>
             </>
           ) : (
@@ -760,24 +802,33 @@ function SessionPage() {
                   sessionId={id!}
                   files={session.files}
                   activeFileId={activeFileId}
-                  onSelectFile={setActiveFileId}
+                  onSelectFile={openFile}
                   onFilesChanged={refresh}
                   sessionLanguage={session.language}
                 />
               </div>
               <div className={styles.editorContainer}>
-                <CodeEditor
-                  value={fileContent}
-                  language={session.language}
-                  onChange={handleSaveFile}
-                  diagnostics={activeFileIsCpp ? cppLsp.diagnostics : undefined}
-                  externalCompletion={activeFileIsCpp ? cppExternalCompletion : undefined}
-                  externalHover={activeFileIsCpp ? cppExternalHover : undefined}
-                  fontSize={fontSize}
-                  onInsertRef={insertRef}
-                  onJumpRef={onJumpRef}
-                  onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
+                <FileTabs
+                  files={session.files}
+                  openFileIds={openFileIds}
+                  activeFileId={activeFileId}
+                  onSelect={setActiveFileId}
+                  onClose={closeFile}
                 />
+                <div className={styles.editorBody}>
+                  <CodeEditor
+                    value={fileContent}
+                    language={session.language}
+                    onChange={handleSaveFile}
+                    diagnostics={activeFileIsCpp ? cppLsp.diagnostics : undefined}
+                    externalCompletion={activeFileIsCpp ? cppExternalCompletion : undefined}
+                    externalHover={activeFileIsCpp ? cppExternalHover : undefined}
+                    fontSize={fontSize}
+                    onInsertRef={insertRef}
+                    onJumpRef={onJumpRef}
+                    onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
+                  />
+                </div>
               </div>
             </div>
           )}
