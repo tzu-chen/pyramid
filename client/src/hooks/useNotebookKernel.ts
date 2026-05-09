@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePageHidden } from './usePageHidden';
+import { usePowerSaver } from '../contexts/PowerSaverContext';
 
 export type KernelStatus = 'disconnected' | 'connecting' | 'starting' | 'idle' | 'busy';
 
@@ -33,6 +35,11 @@ export interface CompletionResult {
 }
 
 export function useNotebookKernel({ sessionId, enabled, onCellEvent }: UseNotebookKernelOptions) {
+  // Suspend when the tab has been hidden long enough; reconnect on focus.
+  const { hiddenDelayMs } = usePowerSaver();
+  const suspended = usePageHidden(hiddenDelayMs);
+  const active = enabled && !suspended;
+
   const [status, setStatus] = useState<KernelStatus>('disconnected');
   const wsRef = useRef<WebSocket | null>(null);
   const msgIdToCellRef = useRef<Map<string, string>>(new Map());
@@ -43,7 +50,7 @@ export function useNotebookKernel({ sessionId, enabled, onCellEvent }: UseNotebo
   onCellEventRef.current = onCellEvent;
 
   const connect = useCallback(() => {
-    if (!sessionId || !enabled) return;
+    if (!sessionId || !active) return;
 
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -119,16 +126,16 @@ export function useNotebookKernel({ sessionId, enabled, onCellEvent }: UseNotebo
       if (wsRef.current !== ws) return;
       wsRef.current = null;
       setStatus('disconnected');
-      if (enabled) {
+      if (active) {
         reconnectTimerRef.current = setTimeout(() => connect(), 3000);
       }
     };
 
     ws.onerror = () => { /* onclose handles reconnect */ };
-  }, [sessionId, enabled]);
+  }, [sessionId, active]);
 
   useEffect(() => {
-    if (enabled && sessionId) connect();
+    if (active && sessionId) connect();
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) {
@@ -138,7 +145,7 @@ export function useNotebookKernel({ sessionId, enabled, onCellEvent }: UseNotebo
         old.close();
       }
     };
-  }, [connect, enabled, sessionId]);
+  }, [connect, active, sessionId]);
 
   const executeCell = useCallback((cellId: string, code: string) => {
     const ws = wsRef.current;

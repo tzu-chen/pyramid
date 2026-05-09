@@ -16,16 +16,19 @@ CompileFlags:
   # Match what executeFile uses (g++) for consistency.
   Compiler: g++
 
-Diagnostics:
-  ClangTidy:
-    Add:
-      - modernize-*
-      - performance-*
-      - bugprone-*
-      - readability-*
-    Remove:
-      - modernize-use-trailing-return-type
-      - readability-identifier-length
+# clang-tidy is OFF by default — it roughly doubles the cost of every
+# diagnostic round and is a major source of idle CPU. To re-enable per-session,
+# uncomment and edit the block below.
+#Diagnostics:
+#  ClangTidy:
+#    Add:
+#      - modernize-*
+#      - performance-*
+#      - bugprone-*
+#      - readability-*
+#    Remove:
+#      - modernize-use-trailing-return-type
+#      - readability-identifier-length
 `;
 
 export const cppProject = {

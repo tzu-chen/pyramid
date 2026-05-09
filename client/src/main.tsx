@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { EditorFontSizeProvider } from './contexts/EditorFontSizeContext';
 import { EditorVimModeProvider } from './contexts/EditorVimModeContext';
+import { PowerSaverProvider } from './contexts/PowerSaverContext';
 import App from './App';
 import './styles/global.css';
 
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')!).render(
       <ThemeProvider>
         <EditorFontSizeProvider>
           <EditorVimModeProvider>
-            <App />
+            <PowerSaverProvider>
+              <App />
+            </PowerSaverProvider>
           </EditorVimModeProvider>
         </EditorFontSizeProvider>
       </ThemeProvider>

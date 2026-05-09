@@ -108,14 +108,20 @@ function SessionPage() {
   const isNotebook = session?.session_type === 'notebook';
   const isFreeform = session?.session_type === 'freeform';
 
+  // User-controlled suspend toggle. When true, all WebSockets for this session
+  // (Lean LSP, clangd, notebook kernel, terminal PTYs) are torn down; the
+  // server-side idle timer reaps the underlying processes within ~5 minutes.
+  // Distinct from the visibility-based auto-suspend in usePageHidden.
+  const [suspended, setSuspended] = useState(false);
+
   // Lean LSP hook
   const leanProjectPath = session?.lean_meta?.absolute_project_path ?? null;
-  const lsp = useLeanLsp(id, isLean, leanProjectPath);
+  const lsp = useLeanLsp(id, isLean && !suspended, leanProjectPath);
 
   // C++ LSP hook (clangd) — only enabled for freeform C++ sessions
   const isFreeformCpp = isFreeform && session?.language === 'cpp';
   const cppProjectPath = isFreeformCpp ? (session?.absolute_working_dir ?? null) : null;
-  const cppLsp = useCppLsp(id, isFreeformCpp, cppProjectPath);
+  const cppLsp = useCppLsp(id, isFreeformCpp && !suspended, cppProjectPath);
 
   // CMake-specific state (only relevant for freeform C++ sessions whose dir
   // contains a CMakeLists.txt — populated lazily after session load).
@@ -648,6 +654,17 @@ function SessionPage() {
           )}
         </div>
         <div className={styles.toolbarRight}>
+          <button
+            className={`${styles.suspendButton} ${suspended ? styles.suspendButtonActive : ''}`}
+            onClick={() => setSuspended(s => !s)}
+            title={
+              suspended
+                ? 'Resume language server, kernel, and terminal connections'
+                : 'Stop language server, kernel, and terminal connections — keeps the editor and notes usable'
+            }
+          >
+            {suspended ? 'Resume' : 'Suspend'}
+          </button>
           <select
             className={styles.statusSelect}
             value={session.status}
@@ -712,6 +729,13 @@ function SessionPage() {
         </div>
       </div>
 
+      {suspended && (
+        <div className={styles.suspendBanner} role="status">
+          Session suspended — language server, kernel, and terminal connections are stopped.
+          The editor and notes still work. Click Resume to reconnect.
+        </div>
+      )}
+
       <div className={styles.workbench} ref={containerRef}>
         <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
           {isNotebook && activeFileId ? (
@@ -756,7 +780,7 @@ function SessionPage() {
                 />
                 <div className={styles.editorBody}>
                   {activeFileExt === 'ipynb' ? (
-                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} />
+                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} />
                   ) : activeFileExt === 'csv' ? (
                     <CsvViewer sessionId={id!} fileId={activeFileId} />
                   ) : (
@@ -1212,7 +1236,7 @@ function SessionPage() {
                 className={styles.terminalSection}
                 style={{ flexBasis: `${(1 - rightVRatio) * 100}%` }}
               >
-                <TerminalPane sessionId={id!} visible={true} />
+                <TerminalPane sessionId={id!} visible={true} suspended={suspended} />
               </div>
             </>
           )}

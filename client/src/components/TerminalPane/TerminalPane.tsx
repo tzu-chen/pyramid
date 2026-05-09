@@ -55,6 +55,7 @@ function saveState(sessionId: string, state: PersistedState): void {
 interface TerminalPaneProps {
   sessionId: string;
   visible: boolean;
+  suspended?: boolean;
 }
 
 function readCssVar(name: string, fallback: string): string {
@@ -83,9 +84,10 @@ interface TerminalTabProps {
   active: boolean;
   paneVisible: boolean;
   themeKey: string;
+  suspended: boolean;
 }
 
-function TerminalTab({ sessionId, tabId, active, paneVisible, themeKey }: TerminalTabProps) {
+function TerminalTab({ sessionId, tabId, active, paneVisible, themeKey, suspended }: TerminalTabProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [term, setTerm] = useState<Terminal | null>(null);
   const [fitAddon, setFitAddon] = useState<FitAddon | null>(null);
@@ -102,7 +104,9 @@ function TerminalTab({ sessionId, tabId, active, paneVisible, themeKey }: Termin
     const raf = requestAnimationFrame(() => {
       if (cancelled || !hostRef.current) return;
       const t = new Terminal({
-        cursorBlink: true,
+        // Cursor blinking schedules a rAF tick forever — costs ~1-3% CPU per
+        // visible terminal even when idle. Steady cursor reads fine.
+        cursorBlink: false,
         fontFamily: '"SF Mono", "Fira Code", "Fira Mono", Menlo, monospace',
         fontSize: 13,
         scrollback: 5000,
@@ -130,7 +134,7 @@ function TerminalTab({ sessionId, tabId, active, paneVisible, themeKey }: Termin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeKey]);
 
-  const { fit } = useTerminal({ sessionId, tabId, term, fitAddon, enabled: true });
+  const { fit } = useTerminal({ sessionId, tabId, term, fitAddon, enabled: !suspended });
 
   // Refit when this tab becomes active or the pane becomes visible/resizes
   useEffect(() => {
@@ -170,19 +174,39 @@ function TerminalTab({ sessionId, tabId, active, paneVisible, themeKey }: Termin
   );
 }
 
-function TerminalPane({ sessionId, visible }: TerminalPaneProps) {
+function TerminalPane({ sessionId, visible, suspended = false }: TerminalPaneProps) {
   const { schemeId } = useTheme();
   const [state, setState] = useState<PersistedState>(() => loadState(sessionId));
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const tabCounterRef = useRef(state.tabs.length);
 
+  // Lazy-mount: only tabs the user has actually activated render a Terminal +
+  // WebSocket + server-side PTY. Visiting a tab adds it to the set (and never
+  // removes it for the lifetime of the pane, so history is preserved across
+  // tab switches). Saves N-1 bash processes per session in the common case.
+  const [mountedIds, setMountedIds] = useState<Set<string>>(
+    () => state.activeId ? new Set([state.activeId]) : new Set()
+  );
+
   // Reload state when session changes
   useEffect(() => {
     const loaded = loadState(sessionId);
     setState(loaded);
     tabCounterRef.current = loaded.tabs.length;
+    setMountedIds(loaded.activeId ? new Set([loaded.activeId]) : new Set());
   }, [sessionId]);
+
+  // Whenever the active tab changes, ensure it's mounted.
+  useEffect(() => {
+    if (!state.activeId) return;
+    setMountedIds(prev => {
+      if (prev.has(state.activeId!)) return prev;
+      const next = new Set(prev);
+      next.add(state.activeId!);
+      return next;
+    });
+  }, [state.activeId]);
 
   // Persist state on change
   useEffect(() => {
@@ -228,6 +252,12 @@ function TerminalPane({ sessionId, visible }: TerminalPaneProps) {
         activeId = tabs.length > 0 ? tabs[tabs.length - 1].id : null;
       }
       return { tabs, activeId };
+    });
+    setMountedIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
     });
   }, [sessionId]);
 
@@ -312,16 +342,19 @@ function TerminalPane({ sessionId, visible }: TerminalPaneProps) {
         {state.tabs.length === 0 ? (
           <div className={styles.empty}>No terminal. Click + to open one.</div>
         ) : (
-          state.tabs.map(tab => (
-            <TerminalTab
-              key={`${tab.id}:${themeKey}`}
-              sessionId={sessionId}
-              tabId={tab.id}
-              active={state.activeId === tab.id}
-              paneVisible={visible}
-              themeKey={themeKey}
-            />
-          ))
+          state.tabs
+            .filter(tab => mountedIds.has(tab.id))
+            .map(tab => (
+              <TerminalTab
+                key={`${tab.id}:${themeKey}`}
+                sessionId={sessionId}
+                tabId={tab.id}
+                active={state.activeId === tab.id}
+                paneVisible={visible}
+                themeKey={themeKey}
+                suspended={suspended}
+              />
+            ))
         )}
       </div>
     </div>

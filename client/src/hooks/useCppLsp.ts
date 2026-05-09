@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { LspDiagnostic } from '../components/CodeEditor/CodeEditor';
+import { usePageHidden } from './usePageHidden';
+import { usePowerSaver } from '../contexts/PowerSaverContext';
 
 interface LspState {
   connected: boolean;
@@ -43,6 +45,13 @@ export interface CppDocumentSymbol {
 }
 
 export function useCppLsp(sessionId: string | undefined, enabled: boolean, projectPath: string | null = null) {
+  // Suspend the LSP connection when the page has been backgrounded for a while.
+  // The server-side idle timer then reaps clangd; reconnect happens on focus.
+  // Power-saver mode tightens the delay aggressively (~5s vs. 60s).
+  const { hiddenDelayMs } = usePowerSaver();
+  const suspended = usePageHidden(hiddenDelayMs);
+  const active = enabled && !suspended;
+
   const [state, setState] = useState<LspState>({
     connected: false,
     initialized: false,
@@ -60,7 +69,7 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
   const diagnosticsByUriRef = useRef<Map<string, LspDiagnostic[]>>(new Map());
 
   const connect = useCallback(() => {
-    if (!sessionId || !enabled || (enabled && !projectPath)) return;
+    if (!sessionId || !active || (active && !projectPath)) return;
 
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -186,7 +195,7 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
       pendingRef.current.clear();
       versionRef.current = 0;
 
-      if (enabled) {
+      if (active) {
         reconnectTimerRef.current = setTimeout(() => {
           connect();
         }, 3000);
@@ -196,10 +205,10 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
     ws.onerror = () => {
       // onclose handles reconnect
     };
-  }, [sessionId, enabled, projectPath]);
+  }, [sessionId, active, projectPath]);
 
   useEffect(() => {
-    if (enabled && sessionId) {
+    if (active && sessionId) {
       connect();
     }
 
@@ -218,7 +227,7 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
       }
       fileOpenedRef.current = false;
     };
-  }, [connect, enabled, sessionId]);
+  }, [connect, active, sessionId]);
 
   const initializedRef = useRef(false);
   initializedRef.current = state.initialized;
@@ -352,7 +361,10 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
     return text ? { contents: text } : null;
   }, [sendRequest]);
 
-  return {
+  // Memoize the return so callers can safely use the whole object as a useEffect
+  // dependency without re-firing on every render. All callbacks are already
+  // stable (useCallback with primitive deps), so only state changes invalidate.
+  return useMemo(() => ({
     connected: state.connected,
     initialized: state.initialized,
     diagnostics: state.diagnostics,
@@ -362,5 +374,15 @@ export function useCppLsp(sessionId: string | undefined, enabled: boolean, proje
     requestCompletion,
     requestHover,
     requestDocumentSymbols,
-  };
+  }), [
+    state.connected,
+    state.initialized,
+    state.diagnostics,
+    state.messages,
+    sendDidOpen,
+    sendDidChange,
+    requestCompletion,
+    requestHover,
+    requestDocumentSymbols,
+  ]);
 }

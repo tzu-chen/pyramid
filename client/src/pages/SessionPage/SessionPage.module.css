@@ -92,6 +92,44 @@
   background-color: var(--color-primary-hover);
 }
 
+.suspendButton {
+  padding: var(--space-1) var(--space-3);
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.suspendButton:hover {
+  background-color: var(--color-surface-hover, var(--color-bg));
+  color: var(--color-text);
+}
+
+.suspendButtonActive {
+  background-color: var(--color-warning, #d97706);
+  color: white;
+  border-color: var(--color-warning, #d97706);
+}
+
+.suspendButtonActive:hover {
+  opacity: 0.9;
+  color: white;
+}
+
+.suspendBanner {
+  padding: var(--space-2) var(--space-4);
+  background-color: var(--color-warning-bg, rgba(217, 119, 6, 0.08));
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Workbench */
 .workbench {
   display: flex;

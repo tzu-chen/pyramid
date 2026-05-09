@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
+import { usePageHidden } from './usePageHidden';
+import { usePowerSaver } from '../contexts/PowerSaverContext';
 
 export type TerminalStatus = 'connecting' | 'connected' | 'closed';
 
@@ -13,6 +15,12 @@ interface UseTerminalOptions {
 }
 
 export function useTerminal({ sessionId, tabId, term, fitAddon, enabled }: UseTerminalOptions) {
+  // Suspend the PTY WebSocket when the tab has been hidden long enough; the
+  // server-side idle timer then kills the bash process. Reconnect on focus.
+  const { hiddenDelayMs } = usePowerSaver();
+  const suspended = usePageHidden(hiddenDelayMs);
+  const active = enabled && !suspended;
+
   const [status, setStatus] = useState<TerminalStatus>('closed');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -30,7 +38,7 @@ export function useTerminal({ sessionId, tabId, term, fitAddon, enabled }: UseTe
   }, [term]);
 
   const connect = useCallback(() => {
-    if (!enabled || !term) return;
+    if (!active || !term) return;
 
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -67,17 +75,17 @@ export function useTerminal({ sessionId, tabId, term, fitAddon, enabled }: UseTe
       if (wsRef.current !== ws) return;
       wsRef.current = null;
       setStatus('closed');
-      if (enabled) {
+      if (active) {
         reconnectTimerRef.current = setTimeout(() => connect(), 3000);
       }
     };
 
     ws.onerror = () => { /* onclose handles reconnect */ };
-  }, [enabled, term, fitAddon, sessionId, tabId, sendResize]);
+  }, [active, term, fitAddon, sessionId, tabId, sendResize]);
 
   // Manage WebSocket lifecycle
   useEffect(() => {
-    if (enabled && term) connect();
+    if (active && term) connect();
     return () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -90,7 +98,7 @@ export function useTerminal({ sessionId, tabId, term, fitAddon, enabled }: UseTe
         try { old.close(); } catch { /* */ }
       }
     };
-  }, [connect, enabled, term]);
+  }, [connect, active, term]);
 
   // Forward user input from xterm to ws
   useEffect(() => {

@@ -1,7 +1,7 @@
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const SCROLLBACK_LIMIT = 256 * 1024;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;

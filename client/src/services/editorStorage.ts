@@ -1,5 +1,6 @@
 const FONT_SIZE_KEY = 'pyramid_editor_font_size';
 const VIM_MODE_KEY = 'pyramid_editor_vim_mode';
+const POWER_SAVER_KEY = 'pyramid_power_saver';
 const DEFAULT_FONT_SIZE = 13;
 const MIN_FONT_SIZE = 10;
 const MAX_FONT_SIZE = 24;
@@ -36,6 +37,19 @@ export const editorStorage = {
   saveVimMode(enabled: boolean): void {
     try {
       localStorage.setItem(VIM_MODE_KEY, enabled ? '1' : '0');
+    } catch { /* localStorage unavailable */ }
+  },
+
+  getPowerSaver(): boolean {
+    try {
+      return localStorage.getItem(POWER_SAVER_KEY) === '1';
+    } catch { /* localStorage unavailable */ }
+    return false;
+  },
+
+  savePowerSaver(enabled: boolean): void {
+    try {
+      localStorage.setItem(POWER_SAVER_KEY, enabled ? '1' : '0');
     } catch { /* localStorage unavailable */ }
   },
 

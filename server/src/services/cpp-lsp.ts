@@ -8,12 +8,23 @@ export const cppLsp = {
     bridge.handleWebSocket(ws, sessionId, {
       command: 'clangd',
       args: [
-        '--background-index',         // index whole project in background
-        '--clang-tidy',               // inline clang-tidy hints
-        '--header-insertion=never',   // we manage includes manually
+        // Index in the background but at OS background priority so it doesn't
+        // contend with foreground work (compiles, the user's typing, etc.).
+        '--background-index',
+        '--background-index-priority=background',
+        // clang-tidy is intentionally OFF by default — it ~doubles the cost of
+        // every diagnostic round and is a major idle-CPU contributor. Force
+        // off at the CLI level so older sessions whose .clangd still carries a
+        // ClangTidy block don't re-enable it.
+        '--clang-tidy=false',
+        '--header-insertion=never',
         '--completion-style=detailed',
-        '--pch-storage=memory',       // faster, more RAM
-        '--log=error',                // quiet stderr
+        '--pch-storage=memory',
+        '--log=error',
+        // Cap reference/result enumeration so a stray "find references" on a
+        // common symbol can't peg the indexer.
+        '--limit-references=1000',
+        '--limit-results=100',
       ],
       cwd: projectPath,
       logPrefix: `cpp-lsp:${sessionId.slice(0, 8)}`,

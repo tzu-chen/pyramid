@@ -1,7 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import type { WebSocket } from 'ws';
 
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes — reaped quickly once the
+                                                // last client disconnects so an idle
+                                                // tab doesn't keep clangd / lean-server
+                                                // chewing on background work.
 
 export interface LspServerConfig {
   command: string;

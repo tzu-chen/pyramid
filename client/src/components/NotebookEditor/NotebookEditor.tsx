@@ -28,6 +28,7 @@ interface NotebookEditorProps {
   sessionId: string;
   fileId: string;
   fontSize: number;
+  suspended?: boolean;
 }
 
 function newId(): string {
@@ -109,7 +110,7 @@ function statusDotClass(status: KernelStatus): string {
   }
 }
 
-function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
+function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: NotebookEditorProps) {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
@@ -211,7 +212,7 @@ function NotebookEditor({ sessionId, fileId, fontSize }: NotebookEditorProps) {
 
   const kernel = useNotebookKernel({
     sessionId,
-    enabled: true,
+    enabled: !suspended,
     onCellEvent: handleCellEvent,
   });
 

@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import type { WebSocket } from 'ws';
 
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const BRIDGE_SCRIPT = path.join(__dirname, 'jupyter-bridge.py');
 
 interface KernelProcess {

@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { LspDiagnostic } from '../components/CodeEditor/CodeEditor';
+import { usePageHidden } from './usePageHidden';
+import { usePowerSaver } from '../contexts/PowerSaverContext';
 
 interface LspState {
   connected: boolean;
@@ -10,6 +12,12 @@ interface LspState {
 }
 
 export function useLeanLsp(sessionId: string | undefined, enabled: boolean, projectPath: string | null = null) {
+  // Suspend the LSP connection when the page has been backgrounded for a while.
+  // The server-side idle timer then reaps lean --server.
+  const { hiddenDelayMs } = usePowerSaver();
+  const suspended = usePageHidden(hiddenDelayMs);
+  const active = enabled && !suspended;
+
   const [state, setState] = useState<LspState>({
     connected: false,
     initialized: false,
@@ -27,7 +35,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
   const fileOpenedRef = useRef(false);
 
   const connect = useCallback(() => {
-    if (!sessionId || !enabled || (enabled && !projectPath)) return;
+    if (!sessionId || !active || (active && !projectPath)) return;
 
     // Cancel any pending reconnect from a previous connection
     if (reconnectTimerRef.current) {
@@ -171,7 +179,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
       versionRef.current = 0;
 
       // Reconnect after delay
-      if (enabled) {
+      if (active) {
         reconnectTimerRef.current = setTimeout(() => {
           connect();
         }, 3000);
@@ -181,10 +189,10 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     ws.onerror = () => {
       // onclose will handle reconnection
     };
-  }, [sessionId, enabled, projectPath]);
+  }, [sessionId, active, projectPath]);
 
   useEffect(() => {
-    if (enabled && sessionId) {
+    if (active && sessionId) {
       connect();
     }
 
@@ -203,7 +211,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
       }
       fileOpenedRef.current = false;
     };
-  }, [connect, enabled, sessionId]);
+  }, [connect, active, sessionId]);
 
   // Use ref for initialized check so callbacks remain stable
   const initializedRef = useRef(false);
@@ -272,7 +280,7 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     }));
   }, []);
 
-  return {
+  return useMemo(() => ({
     connected: state.connected,
     initialized: state.initialized,
     diagnostics: state.diagnostics,
@@ -281,5 +289,14 @@ export function useLeanLsp(sessionId: string | undefined, enabled: boolean, proj
     sendDidOpen,
     sendDidChange,
     requestGoalState,
-  };
+  }), [
+    state.connected,
+    state.initialized,
+    state.diagnostics,
+    state.goalState,
+    state.messages,
+    sendDidOpen,
+    sendDidChange,
+    requestGoalState,
+  ]);
 }

@@ -4,6 +4,7 @@ import { claudeService } from '../../services/claudeService';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useEditorVimMode } from '../../contexts/EditorVimModeContext';
+import { usePowerSaver } from '../../contexts/PowerSaverContext';
 import { editorStorage } from '../../services/editorStorage';
 import { COLOR_SCHEMES } from '../../colorSchemes';
 import styles from './SettingsModal.module.css';
@@ -16,6 +17,7 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const { schemeId, setScheme, autoSwitch, setAutoSwitch } = useTheme();
   const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
   const { vimMode, toggle: toggleVimMode } = useEditorVimMode();
+  const { enabled: powerSaver, toggle: togglePowerSaver } = usePowerSaver();
 
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
@@ -194,6 +196,28 @@ function SettingsModal({ onClose }: SettingsModalProps) {
                   <span className={styles.cardType}>{scheme.type}</span>
                 </button>
               ))}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Performance</h3>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Power saver</span>
+                <span className={styles.rowDesc}>
+                  Suspend language servers, kernels, and terminal shells within ~5s of switching tabs
+                  (default ~60s). Recommended on iPad / battery.
+                </span>
+              </div>
+              <button
+                className={`${styles.toggle} ${powerSaver ? styles.toggleOn : ''}`}
+                onClick={togglePowerSaver}
+                role="switch"
+                aria-checked={powerSaver}
+                aria-label="Power saver"
+              >
+                <span className={styles.toggleThumb} />
+              </button>
             </div>
           </section>
 
