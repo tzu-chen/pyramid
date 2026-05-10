@@ -70,6 +70,11 @@ const VALID_SANITIZERS: ReadonlySet<Sanitizer> = new Set([
 const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]/g;
 const DIAG_RE = /^([^\s:][^:]*):(\d+):(\d+):\s+(error|warning|note|fatal error):\s+(.*)$/;
 
+// CMake File API stamp file. Writing an empty file at this path makes cmake
+// emit a structured codemodel reply describing every declared target.
+const CMAKE_FILE_API_QUERY_REL = '.cmake/api/v1/query/codemodel-v2';
+const CMAKE_FILE_API_REPLY_REL = '.cmake/api/v1/reply';
+
 export function isCmakeProject(projectDir: string): boolean {
   return fs.existsSync(path.join(projectDir, 'CMakeLists.txt'));
 }
@@ -194,6 +199,38 @@ function isFreshBuildDir(buildDir: string): boolean {
   return fs.existsSync(path.join(buildDir, 'CMakeCache.txt'));
 }
 
+function ensureFileApiQuery(buildDir: string): void {
+  const queryFile = path.join(buildDir, CMAKE_FILE_API_QUERY_REL);
+  try {
+    fs.mkdirSync(path.dirname(queryFile), { recursive: true });
+    if (!fs.existsSync(queryFile)) fs.writeFileSync(queryFile, '');
+  } catch {
+    // best-effort; if this fails the dropdown falls back to listExecutables
+  }
+}
+
+// True when the user has touched the project's root CMakeLists.txt since the
+// last successful configure. CMake's own regenerate rules cover sub-CMakeLists,
+// but our cache-hit path needs to detect root edits explicitly so the user
+// sees a configure step run after editing.
+function isStaleConfigure(projectDir: string, buildDir: string): boolean {
+  try {
+    const src = fs.statSync(path.join(projectDir, 'CMakeLists.txt'));
+    const cache = fs.statSync(path.join(buildDir, 'CMakeCache.txt'));
+    return src.mtimeMs > cache.mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+function isConfigureUpToDate(projectDir: string, buildDir: string): boolean {
+  if (!isFreshBuildDir(buildDir)) return false;
+  if (!fs.existsSync(path.join(buildDir, 'compile_commands.json'))) return false;
+  if (!fs.existsSync(path.join(buildDir, CMAKE_FILE_API_REPLY_REL))) return false;
+  if (isStaleConfigure(projectDir, buildDir)) return false;
+  return true;
+}
+
 export async function cmakeConfigure(
   projectDir: string,
   flavor: BuildFlavor,
@@ -213,7 +250,7 @@ export async function cmakeConfigure(
   const buildDir = path.join(projectDir, 'build', flavorDirName(flavor));
   const compileCommandsPath = path.join(buildDir, 'compile_commands.json');
 
-  if (!opts?.reconfigure && isFreshBuildDir(buildDir) && fs.existsSync(compileCommandsPath)) {
+  if (!opts?.reconfigure && isConfigureUpToDate(projectDir, buildDir)) {
     updateCompileCommandsSymlink(projectDir, buildDir);
     return {
       success: true,
@@ -225,6 +262,7 @@ export async function cmakeConfigure(
   }
 
   fs.mkdirSync(buildDir, { recursive: true });
+  ensureFileApiQuery(buildDir);
 
   const args: string[] = [
     ...detectGenerator(),
@@ -378,8 +416,7 @@ export async function ensureBuilt(
   opts?: BuildOptions
 ): Promise<BuildResult> {
   const buildDir = path.join(projectDir, 'build', flavorDirName(flavor));
-  const compileCommandsPath = path.join(buildDir, 'compile_commands.json');
-  const needsConfigure = opts?.reconfigure || !isFreshBuildDir(buildDir) || !fs.existsSync(compileCommandsPath);
+  const needsConfigure = opts?.reconfigure || !isConfigureUpToDate(projectDir, buildDir);
 
   if (needsConfigure) {
     const config = await cmakeConfigure(projectDir, flavor, { reconfigure: opts?.reconfigure });
@@ -506,9 +543,69 @@ export function cleanAll(projectDir: string): boolean {
   return true;
 }
 
-export function listBinaries(projectDir: string, flavor: BuildFlavor): string[] {
+export interface CmakeTargetEntry {
+  name: string;
+  path: string; // absolute path to the binary; '' if declared but not built yet
+}
+
+interface DeclaredTarget {
+  name: string;
+  type: string;
+  artifactPath: string | null;
+}
+
+// Reads the codemodel reply written by cmake when configured with our File API
+// query stamp. Returns one entry per declared target across all configurations.
+function readDeclaredTargets(buildDir: string): DeclaredTarget[] {
+  const replyDir = path.join(buildDir, CMAKE_FILE_API_REPLY_REL);
+  if (!fs.existsSync(replyDir)) return [];
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(replyDir);
+  } catch {
+    return [];
+  }
+  const codemodelFile = entries.find((f) => /^codemodel-v2-[0-9a-f]+\.json$/i.test(f));
+  if (!codemodelFile) return [];
+  let codemodel: { configurations?: Array<{ targets?: Array<{ jsonFile?: string }> }> };
+  try {
+    codemodel = JSON.parse(fs.readFileSync(path.join(replyDir, codemodelFile), 'utf8'));
+  } catch {
+    return [];
+  }
+  const targets = new Map<string, DeclaredTarget>();
+  for (const cfg of codemodel.configurations ?? []) {
+    for (const ref of cfg.targets ?? []) {
+      if (typeof ref.jsonFile !== 'string') continue;
+      let tdata: { name?: string; type?: string; artifacts?: Array<{ path?: string }> };
+      try {
+        tdata = JSON.parse(fs.readFileSync(path.join(replyDir, ref.jsonFile), 'utf8'));
+      } catch {
+        continue;
+      }
+      if (typeof tdata.name !== 'string' || typeof tdata.type !== 'string') continue;
+      let artifactPath: string | null = null;
+      const rel = tdata.artifacts?.[0]?.path;
+      if (typeof rel === 'string') artifactPath = path.join(buildDir, rel);
+      if (!targets.has(tdata.name)) {
+        targets.set(tdata.name, { name: tdata.name, type: tdata.type, artifactPath });
+      }
+    }
+  }
+  return Array.from(targets.values());
+}
+
+export function listCmakeTargets(projectDir: string, flavor: BuildFlavor): CmakeTargetEntry[] {
   const buildDir = path.join(projectDir, 'build', flavorDirName(flavor));
-  return listExecutables(buildDir);
+  const declared = readDeclaredTargets(buildDir).filter((t) => t.type === 'EXECUTABLE');
+  if (declared.length > 0) {
+    return declared.map((t) => ({
+      name: t.name,
+      path: t.artifactPath && fs.existsSync(t.artifactPath) ? t.artifactPath : '',
+    }));
+  }
+  // Fallback: pre-File-API build dirs (or projects configured without our query stamp).
+  return listExecutables(buildDir).map((p) => ({ name: path.basename(p), path: p }));
 }
 
 // ── Build artifact browser ──

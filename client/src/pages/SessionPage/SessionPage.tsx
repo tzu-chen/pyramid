@@ -407,13 +407,14 @@ function SessionPage() {
   const applyBuildResponse = useCallback((resp: BuildResponse) => {
     setCmakeLastBuild(resp);
     setCmakeHistoryRefresh(n => n + 1);
-    if (resp.binary_paths.length) {
-      const names = resp.binary_paths.map(p => p.split('/').pop() || p);
-      setCmakeTargets(names);
-      // Auto-select the only target if user hasn't picked one yet.
-      if (!cmakeTarget && names.length === 1) setCmakeTarget(names[0]);
+    // Re-read targets from the CMake File API: declared targets in CMakeLists.txt
+    // appear here even if --target left them unbuilt this round.
+    refreshCmakeTargets(flavorFromId(cmakeFlavorId));
+    if (!cmakeTarget && resp.binary_paths.length === 1) {
+      const name = resp.binary_paths[0].split('/').pop() || resp.binary_paths[0];
+      setCmakeTarget(name);
     }
-  }, [cmakeTarget]);
+  }, [cmakeTarget, cmakeFlavorId, refreshCmakeTargets]);
 
   const handleCmakeBuild = useCallback(async () => {
     if (!id || cmakeBuilding) return;

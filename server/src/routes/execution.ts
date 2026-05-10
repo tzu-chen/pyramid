@@ -15,7 +15,7 @@ import {
   flavorDirName,
   cleanFlavor,
   cleanAll,
-  listBinaries,
+  listCmakeTargets,
   listArtifactTree,
   resolveArtifactPath,
   statArtifact,
@@ -374,7 +374,7 @@ router.get('/:id/cmake/binaries', (req: Request, res: Response) => {
       res.status(400).json({ error: v.error });
       return;
     }
-    const binaries = listBinaries(dir, flavor).map((p) => ({ path: p, name: path.basename(p) }));
+    const binaries = listCmakeTargets(dir, flavor);
     res.json({ flavor: flavorDirName(flavor), binaries });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
