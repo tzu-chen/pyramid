@@ -13,6 +13,11 @@ interface CompilerExplorerPanelProps {
   // Returns the live editor selection. Provided so we read the *current*
   // selection at compile time, not whatever was selected at mount.
   getSelection: () => EditorSelection | null;
+  // Current 1-indexed cursor line in the editor (whole-file coordinates).
+  // Used to reverse-highlight matching asm rows.
+  cursorLine?: number | null;
+  // Paint a 1-indexed source line in the editor; null clears.
+  setHighlightedSourceLine?: (line: number | null) => void;
 }
 
 const COMPILER_KEY = 'pyramid_godbolt_compiler';
@@ -48,7 +53,7 @@ function joinTextLines(arr: { text: string }[]): string {
   return arr.map((l) => l.text).join('\n');
 }
 
-export default function CompilerExplorerPanel({ fileName, fileContent, getSelection }: CompilerExplorerPanelProps) {
+export default function CompilerExplorerPanel({ fileName, fileContent, getSelection, cursorLine, setHighlightedSourceLine }: CompilerExplorerPanelProps) {
   const [compilers, setCompilers] = useState<GodboltCompiler[]>([]);
   const [compilersLoading, setCompilersLoading] = useState(false);
   const [compilersError, setCompilersError] = useState<string | null>(null);
@@ -105,6 +110,34 @@ export default function CompilerExplorerPanel({ fileName, fileContent, getSelect
   // stable but always reads the live selection.
   const getSelectionRef = useRef(getSelection);
   getSelectionRef.current = getSelection;
+
+  // Stable ref to the highlight setter so unmount cleanup doesn't churn.
+  const setHighlightedSourceLineRef = useRef(setHighlightedSourceLine);
+  setHighlightedSourceLineRef.current = setHighlightedSourceLine;
+
+  // Always clear any lingering editor highlight when the panel is closed,
+  // when a fresh compile arrives (rows re-render), or when the result is
+  // reset — otherwise a stale hover decoration sticks around.
+  useEffect(() => {
+    return () => {
+      setHighlightedSourceLineRef.current?.(null);
+    };
+  }, [result]);
+
+  // Map an asm row's source line back to whole-file coordinates. Godbolt
+  // reports lines relative to the snippet we sent; lineOffset compensates
+  // when the user compiled a selection rather than the whole file.
+  const mapAsmLineToSource = useCallback((srcLine: number | null | undefined): number | null => {
+    if (srcLine == null) return null;
+    return resultScope ? srcLine + resultScope.lineOffset : srcLine;
+  }, [resultScope]);
+
+  // Stats: do we have any source mapping at all? If not, surface a hint —
+  // some flag combinations (e.g. -g0) strip the data godbolt needs.
+  const hasAnySourceMapping = useMemo(() => {
+    if (!result) return false;
+    return result.asm.some((l) => l.source?.line != null);
+  }, [result]);
 
   const handleCompile = useCallback(async () => {
     if (!compilerId || compiling) return;
@@ -228,22 +261,37 @@ export default function CompilerExplorerPanel({ fileName, fileContent, getSelect
 
           <div className={styles.asmSection}>
             <div className={styles.sectionLabel}>asm</div>
+            {result.asm.length > 0 && !hasAnySourceMapping && (
+              <div className={styles.placeholderSmall}>
+                No source mapping in output — hover sync is unavailable.
+                Try adding <code>-g</code> to the flags.
+              </div>
+            )}
             {result.asm.length === 0 ? (
               <div className={styles.placeholderSmall}>No assembly produced.</div>
             ) : (
-              <div className={styles.asmList}>
+              <div
+                className={styles.asmList}
+                onMouseLeave={() => setHighlightedSourceLine?.(null)}
+              >
                 {result.asm.map((line, i) => {
                   const srcLine = line.source?.line;
+                  const mappedLine = mapAsmLineToSource(srcLine);
                   const isLabel = !!line.text && !line.text.startsWith(' ') && !line.text.startsWith('\t')
                     && line.text.trim().endsWith(':');
                   const isDirective = line.text.trimStart().startsWith('.');
                   const cls = isLabel ? styles.asmLabel : isDirective ? styles.asmDirective : styles.asmInstr;
+                  const isActive = cursorLine != null && mappedLine != null && mappedLine === cursorLine;
                   return (
-                    <div key={i} className={`${styles.asmLine} ${cls}`}>
+                    <div
+                      key={i}
+                      className={`${styles.asmLine} ${cls} ${isActive ? styles.asmLineActive : ''}`}
+                      onMouseEnter={() => {
+                        if (mappedLine != null) setHighlightedSourceLine?.(mappedLine);
+                      }}
+                    >
                       <span className={styles.asmLineNo}>
-                        {srcLine != null
-                          ? (resultScope ? srcLine + resultScope.lineOffset : srcLine)
-                          : ''}
+                        {mappedLine != null ? mappedLine : ''}
                       </span>
                       <pre className={styles.asmText}>{line.text || ' '}</pre>
                     </div>

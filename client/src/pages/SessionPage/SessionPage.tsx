@@ -144,6 +144,13 @@ function SessionPage() {
     return getSelectionRef.current ? getSelectionRef.current() : null;
   }, []);
 
+  // asm ↔ source hover-sync wiring for CompilerExplorerPanel.
+  const setHighlightedLineRef = useRef<((line: number | null) => void) | null>(null);
+  const setHighlightedSourceLineStable = useCallback((line: number | null) => {
+    setHighlightedLineRef.current?.(line);
+  }, []);
+  const [editorCursorLine, setEditorCursorLine] = useState<number | null>(null);
+
   // C++ outline symbols (refreshed on file change + debounced edits)
   const [cppSymbols, setCppSymbols] = useState<CppDocumentSymbol[]>([]);
   const [cppSymbolsLoading, setCppSymbolsLoading] = useState(false);
@@ -249,6 +256,7 @@ function SessionPage() {
   useEffect(() => {
     lspOpenedFileRef.current = null;
     fileUriRef.current = null;
+    setEditorCursorLine(null);
   }, [activeFileId, lsp.initialized, cppLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
@@ -357,6 +365,8 @@ function SessionPage() {
     if (isLean && fileUriRef.current) {
       lspRef.current.requestGoalState(fileUriRef.current, position.line, position.character);
     }
+    // 1-indexed line for asm-panel reverse highlight (CodeEditor reports 0-indexed).
+    setEditorCursorLine(position.line + 1);
   }, [isLean]);
 
   // Detect CMake project on session load. Re-runs whenever the session's file
@@ -844,6 +854,7 @@ function SessionPage() {
                     value={fileContent}
                     language={session.language}
                     onChange={handleSaveFile}
+                    onCursorChange={activeFileIsCpp ? handleCursorChange : undefined}
                     diagnostics={activeFileIsCpp ? cppLsp.diagnostics : undefined}
                     externalCompletion={activeFileIsCpp ? cppExternalCompletion : undefined}
                     externalHover={activeFileIsCpp ? cppExternalHover : undefined}
@@ -851,6 +862,7 @@ function SessionPage() {
                     onInsertRef={insertRef}
                     onJumpRef={onJumpRef}
                     onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
+                    setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}
                   />
                 </div>
               </div>
@@ -1121,6 +1133,8 @@ function SessionPage() {
                 fileName={session.files.find(f => f.id === activeFileId)?.filename || ''}
                 fileContent={fileContent}
                 getSelection={getSelectionStable}
+                cursorLine={editorCursorLine}
+                setHighlightedSourceLine={setHighlightedSourceLineStable}
               />
             )}
 

@@ -230,6 +230,46 @@ interface SearchMatch {
 const SEARCH_MATCH_HARD_CAP = 1000;
 const SEARCH_LIST_DISPLAY_CAP = 50;
 
+// --- Source-line Highlight Extension ---
+//
+// Drives the asm ↔ source hover-sync used by CompilerExplorerPanel: the panel
+// dispatches a 1-indexed line (or null to clear) and we paint a single
+// background decoration on that line. Implemented as a separate field from the
+// search-match marks so the two effects can coexist without clobbering.
+
+const setHighlightedLine = StateEffect.define<number | null>();
+
+const highlightedLineMark = Decoration.line({ class: 'cm-asm-source-highlight' });
+
+const highlightedLineField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setHighlightedLine)) {
+        const line = e.value;
+        if (line == null) {
+          deco = Decoration.none;
+        } else {
+          const doc = tr.state.doc;
+          const ln = Math.max(1, Math.min(line, doc.lines));
+          const li = doc.line(ln);
+          deco = Decoration.set([highlightedLineMark.range(li.from)]);
+        }
+      }
+    }
+    return deco;
+  },
+  provide: f => EditorView.decorations.from(f),
+});
+
+const highlightedLineTheme = EditorView.theme({
+  '.cm-asm-source-highlight': {
+    backgroundColor: 'rgba(255, 213, 79, 0.22)',
+    boxShadow: 'inset 2px 0 0 rgba(255, 167, 38, 0.85)',
+  },
+});
+
 // --- LSP Diagnostics Extension ---
 
 export interface LspDiagnostic {
@@ -272,6 +312,8 @@ interface CodeEditorProps {
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
   onJumpRef?: MutableRefObject<((line: number, column: number) => void) | null>;
   onGetSelectionRef?: MutableRefObject<(() => EditorSelection) | null>;
+  // 1-indexed line; null clears. Used for asm ↔ source hover sync.
+  setHighlightedLineRef?: MutableRefObject<((line: number | null) => void) | null>;
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
 }
@@ -309,7 +351,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, externalCompletion, externalHover }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -362,6 +404,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       tabKeymap,
       searchHighlightField,
       searchTheme,
+      highlightedLineField,
+      highlightedLineTheme,
       getLanguageExtension(language),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -537,6 +581,20 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       if (onJumpRef) onJumpRef.current = null;
     };
   }, [onJumpRef, createEditor]);
+
+  // Expose a setter for the source-line highlight (asm ↔ source sync).
+  useEffect(() => {
+    if (setHighlightedLineRef) {
+      setHighlightedLineRef.current = (line: number | null) => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({ effects: setHighlightedLine.of(line) });
+      };
+    }
+    return () => {
+      if (setHighlightedLineRef) setHighlightedLineRef.current = null;
+    };
+  }, [setHighlightedLineRef, createEditor]);
 
   // Update diagnostics without recreating the editor
   useEffect(() => {

@@ -243,6 +243,15 @@
   background-color: var(--color-bg-tertiary);
 }
 
+.asmLineActive {
+  background-color: rgba(255, 213, 79, 0.18);
+  border-left-color: rgba(255, 167, 38, 0.85);
+}
+
+.asmLineActive:hover {
+  background-color: rgba(255, 213, 79, 0.28);
+}
+
 .asmLineNo {
   color: var(--color-text-tertiary);
   text-align: right;
