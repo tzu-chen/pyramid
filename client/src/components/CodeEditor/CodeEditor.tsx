@@ -316,6 +316,7 @@ interface CodeEditorProps {
   setHighlightedLineRef?: MutableRefObject<((line: number | null) => void) | null>;
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
+  hideSearchBar?: boolean;
 }
 
 function pythonWithCompletion(): Extension {
@@ -351,7 +352,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -758,6 +759,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   return (
     <div className={styles.wrapper}>
       <div ref={containerRef} className={styles.editor} />
+      {!hideSearchBar && (
       <div className={styles.searchBar}>
         <div className={styles.searchBarRow}>
           <input
@@ -821,6 +823,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
           </ul>
         )}
       </div>
+      )}
     </div>
   );
 }

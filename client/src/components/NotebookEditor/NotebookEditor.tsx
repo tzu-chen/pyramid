@@ -569,6 +569,7 @@ function CellView(props: CellViewProps) {
                   onChange={onChange}
                   fontSize={fontSize}
                   externalCompletion={completionSource}
+                  hideSearchBar
                 />
               </div>
             ) : mdEditing ? (
