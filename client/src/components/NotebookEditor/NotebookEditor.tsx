@@ -110,6 +110,22 @@ function statusDotClass(status: KernelStatus): string {
   }
 }
 
+// Match a markdown heading on the first non-empty line of a cell's source.
+// Returns 0 if the cell is not a heading.
+function getHeadingLevel(cell: NotebookCell): number {
+  if (cell.cell_type !== 'markdown') return 0;
+  const src = cell.source || '';
+  // Find first non-empty line
+  for (const rawLine of src.split('\n')) {
+    const line = rawLine.trimStart();
+    if (!line) continue;
+    const m = /^(#{1,6})\s+\S/.exec(line);
+    return m ? m[1].length : 0;
+  }
+  return 0;
+}
+
+
 function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: NotebookEditorProps) {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
@@ -341,6 +357,34 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     });
   }, []);
 
+  const toggleCellHalfWidth = useCallback((cellId: string) => {
+    setNotebook(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        cells: prev.cells.map(c => {
+          if (c.id !== cellId) return c;
+          const meta = (c.metadata || {}) as Record<string, unknown>;
+          return { ...c, metadata: { ...meta, half_width: !meta.half_width } };
+        }),
+      };
+    });
+  }, []);
+
+  const toggleSectionCollapsed = useCallback((cellId: string) => {
+    setNotebook(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        cells: prev.cells.map(c => {
+          if (c.id !== cellId) return c;
+          const meta = (c.metadata || {}) as Record<string, unknown>;
+          return { ...c, metadata: { ...meta, section_collapsed: !meta.section_collapsed } };
+        }),
+      };
+    });
+  }, []);
+
   const focusActiveCellEditor = useCallback((cellId: string) => {
     const root = notebookRef.current;
     if (!root) return;
@@ -376,6 +420,36 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     pendingFocusRef.current = null;
     requestAnimationFrame(() => focusActiveCellEditor(id));
   }, [notebook, focusActiveCellEditor]);
+
+  // Compute which cells are hidden by collapsed markdown-heading sections.
+  // A section starts at a heading cell with level N and contains all subsequent
+  // cells until the next heading of level ≤ N. Collapsing that heading hides
+  // everything inside, including nested sub-headings.
+  const { hiddenCells, sectionHiddenCount } = useMemo(() => {
+    const hidden = new Set<string>();
+    const counts = new Map<string, number>();
+    if (!notebook) return { hiddenCells: hidden, sectionHiddenCount: counts };
+    type StackEntry = { level: number; collapsed: boolean; headingCellId: string };
+    const stack: StackEntry[] = [];
+    for (const c of notebook.cells) {
+      const level = getHeadingLevel(c);
+      const isCollapsedHeading =
+        level > 0 && !!(c.metadata as Record<string, unknown> | undefined)?.section_collapsed;
+      if (level > 0) {
+        while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+      }
+      const anyCollapsed = stack.some(s => s.collapsed);
+      if (anyCollapsed) {
+        hidden.add(c.id);
+        const outermost = stack.find(s => s.collapsed);
+        if (outermost) counts.set(outermost.headingCellId, (counts.get(outermost.headingCellId) || 0) + 1);
+      }
+      if (level > 0) {
+        stack.push({ level, collapsed: isCollapsedHeading || anyCollapsed, headingCellId: c.id });
+      }
+    }
+    return { hiddenCells: hidden, sectionHiddenCount: counts };
+  }, [notebook]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -414,19 +488,25 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         changeCellType(activeCellId, 'code');
         break;
       case 'j':
-      case 'ArrowDown':
-        if (idx + 1 < nb.cells.length) {
+      case 'ArrowDown': {
+        let next = idx + 1;
+        while (next < nb.cells.length && hiddenCells.has(nb.cells[next].id)) next++;
+        if (next < nb.cells.length) {
           e.preventDefault();
-          setActiveCellId(nb.cells[idx + 1].id);
+          setActiveCellId(nb.cells[next].id);
         }
         break;
+      }
       case 'k':
-      case 'ArrowUp':
-        if (idx > 0) {
+      case 'ArrowUp': {
+        let prev = idx - 1;
+        while (prev >= 0 && hiddenCells.has(nb.cells[prev].id)) prev--;
+        if (prev >= 0) {
           e.preventDefault();
-          setActiveCellId(nb.cells[idx - 1].id);
+          setActiveCellId(nb.cells[prev].id);
         }
         break;
+      }
       case 'Enter':
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
           e.preventDefault();
@@ -447,7 +527,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         break;
       }
     }
-  }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor]);
+  }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor, hiddenCells]);
 
   if (!notebook) {
     return <div className={styles.notebook}><div className={styles.toolbar}>Loading notebook...</div></div>;
@@ -470,27 +550,41 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
       </div>
 
       <div className={styles.cellList}>
-        {notebook.cells.map(cell => (
-          <CellView
-            key={cell.id}
-            cell={cell}
-            active={cell.id === activeCellId}
-            running={kernel.runningCellId === cell.id}
-            kernelIdle={kernel.status === 'idle' || kernel.status === 'busy'}
-            fontSize={fontSize}
-            onFocus={() => setActiveCellId(cell.id)}
-            onChange={(src) => updateCellSource(cell.id, src)}
-            onRun={() => runCell(cell.id)}
-            onAdvance={() => advanceFromCell(cell.id)}
-            onDelete={() => deleteCell(cell.id)}
-            onMoveUp={() => moveCell(cell.id, -1)}
-            onMoveDown={() => moveCell(cell.id, 1)}
-            onInsertBelow={(type) => insertCell(cell.id, type)}
-            onChangeType={(type) => changeCellType(cell.id, type)}
-            onToggleOutputs={() => toggleOutputsCollapsed(cell.id)}
-            completionSource={completionSource}
-          />
-        ))}
+        {notebook.cells.map(cell => {
+          if (hiddenCells.has(cell.id)) return null;
+          const headingLevel = getHeadingLevel(cell);
+          const sectionCollapsed = headingLevel > 0
+            && !!(cell.metadata as Record<string, unknown> | undefined)?.section_collapsed;
+          const hiddenInSection = sectionCollapsed ? (sectionHiddenCount.get(cell.id) || 0) : 0;
+          const halfWidth = !!(cell.metadata as Record<string, unknown> | undefined)?.half_width;
+          return (
+            <CellView
+              key={cell.id}
+              cell={cell}
+              active={cell.id === activeCellId}
+              running={kernel.runningCellId === cell.id}
+              kernelIdle={kernel.status === 'idle' || kernel.status === 'busy'}
+              fontSize={fontSize}
+              headingLevel={headingLevel}
+              sectionCollapsed={sectionCollapsed}
+              hiddenInSection={hiddenInSection}
+              halfWidth={halfWidth}
+              onFocus={() => setActiveCellId(cell.id)}
+              onChange={(src) => updateCellSource(cell.id, src)}
+              onRun={() => runCell(cell.id)}
+              onAdvance={() => advanceFromCell(cell.id)}
+              onDelete={() => deleteCell(cell.id)}
+              onMoveUp={() => moveCell(cell.id, -1)}
+              onMoveDown={() => moveCell(cell.id, 1)}
+              onInsertBelow={(type) => insertCell(cell.id, type)}
+              onChangeType={(type) => changeCellType(cell.id, type)}
+              onToggleOutputs={() => toggleOutputsCollapsed(cell.id)}
+              onToggleSection={headingLevel > 0 ? () => toggleSectionCollapsed(cell.id) : undefined}
+              onToggleHalfWidth={() => toggleCellHalfWidth(cell.id)}
+              completionSource={completionSource}
+            />
+          );
+        })}
       </div>
 
       <div className={styles.addCellBar}>
@@ -507,6 +601,10 @@ interface CellViewProps {
   running: boolean;
   kernelIdle: boolean;
   fontSize: number;
+  headingLevel: number;
+  sectionCollapsed: boolean;
+  hiddenInSection: number;
+  halfWidth: boolean;
   onFocus: () => void;
   onChange: (src: string) => void;
   onRun: () => void;
@@ -517,11 +615,13 @@ interface CellViewProps {
   onInsertBelow: (type: CellType) => void;
   onChangeType: (type: CellType) => void;
   onToggleOutputs: () => void;
+  onToggleSection?: () => void;
+  onToggleHalfWidth: () => void;
   completionSource?: ExternalCompletionSource;
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, active, running, kernelIdle, fontSize, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, completionSource } = props;
+  const { cell, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
   const outputsCollapsed = !!(cell.metadata as Record<string, unknown> | undefined)?.collapsed;
   const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
@@ -530,14 +630,39 @@ function CellView(props: CellViewProps) {
     : '';
 
   return (
-    <>
-      <div className={`${styles.cell} ${active ? styles.cellActive : ''}`} data-cell-id={cell.id} onClick={onFocus}>
+    <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
+      <div
+        className={`${styles.cell} ${active ? styles.cellActive : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
+        data-cell-id={cell.id}
+        onClick={onFocus}
+      >
         <div className={styles.cellHeader}>
-          <span className={styles.cellLabel}>{cell.cell_type}</span>
+          {headingLevel > 0 && onToggleSection && (
+            <button
+              className={styles.sectionToggle}
+              onClick={(e) => { e.stopPropagation(); onToggleSection(); }}
+              title={sectionCollapsed ? 'Expand section' : 'Collapse section'}
+            >
+              <span className={`${styles.sectionChevron} ${sectionCollapsed ? styles.sectionChevronCollapsed : ''}`}>▼</span>
+            </button>
+          )}
+          <span className={styles.cellLabel}>
+            {headingLevel > 0 ? `H${headingLevel}` : cell.cell_type}
+          </span>
+          {sectionCollapsed && hiddenInSection > 0 && (
+            <span className={styles.sectionCount}>· {hiddenInSection} cell{hiddenInSection === 1 ? '' : 's'} hidden</span>
+          )}
           <div className={styles.cellActions}>
             {cell.cell_type === 'code' && (
               <button onClick={(e) => { e.stopPropagation(); onRun(); }} disabled={!kernelIdle || running} title="Run cell (Shift+Enter)">Run</button>
             )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleHalfWidth(); }}
+              className={halfWidth ? styles.cellActionActive : ''}
+              title={halfWidth ? 'Switch this cell back to full width' : 'Make this cell half width (flows side-by-side with adjacent half-width cells)'}
+            >
+              {halfWidth ? '◧' : '▭'}
+            </button>
             <button onClick={(e) => { e.stopPropagation(); onChangeType(cell.cell_type === 'code' ? 'markdown' : 'code'); }}>
               {cell.cell_type === 'code' ? '→ md' : '→ code'}
             </button>
@@ -621,7 +746,7 @@ function CellView(props: CellViewProps) {
         <button onClick={() => onInsertBelow('code')}>+ code below</button>
         <button onClick={() => onInsertBelow('markdown')}>+ md below</button>
       </div>
-    </>
+    </div>
   );
 }
 

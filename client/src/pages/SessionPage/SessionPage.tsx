@@ -18,6 +18,7 @@ import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
 import FileTabs from '../../components/FileTabs/FileTabs';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
+import VariableInspector from '../../components/VariableInspector/VariableInspector';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import BuildPanel from '../../components/BuildPanel/BuildPanel';
@@ -38,7 +39,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
@@ -964,6 +965,14 @@ function SessionPage() {
                     Asm
                   </button>
                 )}
+                {isNotebook && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'variables' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('variables')}
+                  >
+                    Variables
+                  </button>
+                )}
                 <button
                   className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('claude')}
@@ -1126,6 +1135,17 @@ function SessionPage() {
                 initialized={cppLsp.initialized}
                 onSelect={handleOutlineSelect}
               />
+            )}
+
+            {/* Notebook: Variable Inspector */}
+            {isNotebook && (
+              <div style={{ display: activeTab === 'variables' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                <VariableInspector
+                  sessionId={id!}
+                  active={activeTab === 'variables'}
+                  suspended={suspended}
+                />
+              </div>
             )}
 
             {/* C++: Compiler Explorer (godbolt.org) */}

@@ -35,6 +35,63 @@ except ImportError:
     sys.exit(1)
 
 
+# Msg IDs for inspect requests. iopub stream output for these msg IDs is
+# captured into INSPECT_BUFFERS instead of being broadcast, and an
+# `inspect_reply` event is emitted on execute_reply.
+INSPECT_MSG_IDS = set()
+INSPECT_BUFFERS = {}
+
+INSPECT_CODE = r'''
+def __pyramid_inspect():
+    import json as _json
+    import sys as _sys
+    _skip = {'In', 'Out', 'exit', 'quit', 'get_ipython'}
+    _skip_types = {'module', 'function', 'builtin_function_or_method', 'type',
+                   'method', 'method-wrapper', 'classobj', 'staticmethod',
+                   'classmethod', 'MethodType'}
+    _out = []
+    for _name in list(globals().keys()):
+        if _name.startswith('_'): continue
+        if _name in _skip: continue
+        try:
+            _obj = globals()[_name]
+            _tname = type(_obj).__name__
+            if _tname in _skip_types: continue
+            try:
+                _repr = repr(_obj)
+            except Exception:
+                _repr = '<unrepresentable>'
+            if len(_repr) > 240:
+                _repr = _repr[:240] + '...'
+            _shape = None
+            try:
+                if hasattr(_obj, 'shape'):
+                    _shape = str(getattr(_obj, 'shape'))
+                elif hasattr(_obj, '__len__'):
+                    _shape = 'len=' + str(len(_obj))
+            except Exception:
+                pass
+            _size = None
+            try:
+                _size = _sys.getsizeof(_obj)
+            except Exception:
+                pass
+            _out.append({
+                'name': _name,
+                'type': _tname,
+                'repr': _repr,
+                'shape': _shape,
+                'size': _size,
+            })
+        except Exception:
+            pass
+    _sys.stdout.write(_json.dumps(_out))
+    _sys.stdout.flush()
+__pyramid_inspect()
+del __pyramid_inspect
+'''
+
+
 def emit(event):
     sys.stdout.write(json.dumps(event) + "\n")
     sys.stdout.flush()
@@ -49,6 +106,15 @@ def iopub_loop(kc):
         mtype = msg.get("msg_type")
         parent_id = msg.get("parent_header", {}).get("msg_id", "")
         content = msg.get("content", {})
+        # Inspect requests capture their own stdout into INSPECT_BUFFERS and
+        # never broadcast iopub events to clients (avoids polluting cell outputs).
+        if parent_id in INSPECT_MSG_IDS:
+            if mtype == "stream" and content.get("name") == "stdout":
+                INSPECT_BUFFERS.setdefault(parent_id, []).append(content.get("text", ""))
+            elif mtype == "error":
+                # Surface kernel errors so the client can show something instead of hanging
+                INSPECT_BUFFERS[parent_id + ":__error__"] = content.get("evalue", "inspect failed")
+            continue
         if mtype == "status":
             emit({"type": "status", "parent_msg_id": parent_id, "state": content.get("execution_state")})
         elif mtype == "stream":
@@ -81,6 +147,26 @@ def shell_loop(kc):
         mtype = msg.get("msg_type")
         parent_id = msg.get("parent_header", {}).get("msg_id", "")
         content = msg.get("content", {})
+        if parent_id in INSPECT_MSG_IDS and mtype == "execute_reply":
+            INSPECT_MSG_IDS.discard(parent_id)
+            err_key = parent_id + ":__error__"
+            if err_key in INSPECT_BUFFERS:
+                err = INSPECT_BUFFERS.pop(err_key)
+                INSPECT_BUFFERS.pop(parent_id, None)
+                emit({"type": "inspect_reply", "parent_msg_id": parent_id,
+                      "variables": [], "error": err})
+            else:
+                text = "".join(INSPECT_BUFFERS.pop(parent_id, []))
+                try:
+                    data = json.loads(text) if text.strip() else []
+                except Exception as e:
+                    data = []
+                    emit({"type": "inspect_reply", "parent_msg_id": parent_id,
+                          "variables": [], "error": "parse error: " + str(e)})
+                    continue
+                emit({"type": "inspect_reply", "parent_msg_id": parent_id,
+                      "variables": data})
+            continue
         if mtype == "execute_reply":
             emit({"type": "execute_reply", "parent_msg_id": parent_id,
                   "status": content.get("status"),
@@ -131,6 +217,18 @@ def main():
                 "user_expressions": {}, "allow_stdin": False, "stop_on_error": True,
             })
             # Overwrite msg_id with the one supplied by Node so event correlation is simple
+            if client_msg_id:
+                msg["header"]["msg_id"] = client_msg_id
+                msg["msg_id"] = client_msg_id
+            kc.shell_channel.send(msg)
+        elif cmd == "inspect":
+            client_msg_id = req.get("msg_id", "")
+            INSPECT_MSG_IDS.add(client_msg_id)
+            msg = kc.session.msg("execute_request", content={
+                "code": INSPECT_CODE,
+                "silent": False, "store_history": False,
+                "user_expressions": {}, "allow_stdin": False, "stop_on_error": True,
+            })
             if client_msg_id:
                 msg["header"]["msg_id"] = client_msg_id
                 msg["msg_id"] = client_msg_id
