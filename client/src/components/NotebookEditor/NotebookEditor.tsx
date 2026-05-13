@@ -118,6 +118,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
   notebookDataRef.current = notebook;
   const notebookRef = useRef<HTMLDivElement>(null);
   const lastDPressRef = useRef<number>(0);
+  const pendingFocusRef = useRef<string | null>(null);
 
   // Load notebook from disk when fileId changes
   useEffect(() => {
@@ -351,6 +352,31 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     if (ta) ta.focus();
   }, []);
 
+  const advanceFromCell = useCallback((cellId: string) => {
+    setNotebook(prev => {
+      if (!prev) return prev;
+      const idx = prev.cells.findIndex(c => c.id === cellId);
+      if (idx === -1) return prev;
+      if (idx + 1 < prev.cells.length) {
+        const nextId = prev.cells[idx + 1].id;
+        setActiveCellId(nextId);
+        pendingFocusRef.current = nextId;
+        return prev;
+      }
+      const newCell: NotebookCell = { id: newId(), cell_type: 'code', source: '', outputs: [], execution_count: null };
+      setActiveCellId(newCell.id);
+      pendingFocusRef.current = newCell.id;
+      return { ...prev, cells: [...prev.cells, newCell] };
+    });
+  }, []);
+
+  useEffect(() => {
+    const id = pendingFocusRef.current;
+    if (!id) return;
+    pendingFocusRef.current = null;
+    requestAnimationFrame(() => focusActiveCellEditor(id));
+  }, [notebook, focusActiveCellEditor]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const inEditor = !!target.closest('.cm-editor') || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT';
@@ -455,6 +481,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
             onFocus={() => setActiveCellId(cell.id)}
             onChange={(src) => updateCellSource(cell.id, src)}
             onRun={() => runCell(cell.id)}
+            onAdvance={() => advanceFromCell(cell.id)}
             onDelete={() => deleteCell(cell.id)}
             onMoveUp={() => moveCell(cell.id, -1)}
             onMoveDown={() => moveCell(cell.id, 1)}
@@ -483,6 +510,7 @@ interface CellViewProps {
   onFocus: () => void;
   onChange: (src: string) => void;
   onRun: () => void;
+  onAdvance: () => void;
   onDelete: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -493,7 +521,7 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, active, running, kernelIdle, fontSize, onFocus, onChange, onRun, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, completionSource } = props;
+  const { cell, active, running, kernelIdle, fontSize, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, completionSource } = props;
   const outputsCollapsed = !!(cell.metadata as Record<string, unknown> | undefined)?.collapsed;
   const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
@@ -531,6 +559,7 @@ function CellView(props: CellViewProps) {
                     e.preventDefault();
                     e.stopPropagation();
                     onRun();
+                    onAdvance();
                   }
                 }}
               >
@@ -552,6 +581,7 @@ function CellView(props: CellViewProps) {
                   if (e.shiftKey && e.key === 'Enter') {
                     e.preventDefault();
                     setMdEditing(false);
+                    onAdvance();
                   }
                 }}
                 placeholder="Markdown (supports LaTeX with $...$ and $$...$$)..."
