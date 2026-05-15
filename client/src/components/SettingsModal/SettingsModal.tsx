@@ -193,7 +193,6 @@ function SettingsModal({ onClose }: SettingsModalProps) {
                     </div>
                   </div>
                   <span className={styles.cardName}>{scheme.name}</span>
-                  <span className={styles.cardType}>{scheme.type}</span>
                 </button>
               ))}
             </div>

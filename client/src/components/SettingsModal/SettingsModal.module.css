@@ -172,8 +172,9 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 150px);
   gap: 10px;
+  justify-content: center;
 }
 
 .card {
@@ -267,13 +268,6 @@
   line-height: 1.2;
 }
 
-.cardType {
-  font-size: 10px;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-
 .keyStatus {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -355,6 +349,6 @@
 
 @media (max-width: 600px) {
   .grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(120px, 150px));
   }
 }
