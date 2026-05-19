@@ -2,13 +2,118 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
+}
+
+/* Chat transcript */
+.transcript {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background-color: var(--color-bg);
+}
+
+.transcriptEmpty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-4) var(--space-2);
+}
+
+.loadingRow {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  padding: var(--space-2);
+}
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-surface);
+}
+
+.turnUser {
+  background-color: var(--color-bg-secondary);
+}
+
+.turnAssistant {
+  background-color: var(--color-surface);
+}
+
+.turnHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--font-size-xs);
+}
+
+.turnRole {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.turnMeta {
+  color: var(--color-text-tertiary);
+}
+
+.turnBody {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.userText {
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: var(--color-text);
 }
 
 /* Context blocks */
 .contextArea {
   padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-light);
   border-bottom: 1px solid var(--color-border-light);
+  background-color: var(--color-surface);
+  max-height: 40%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.contextHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+
+.contextHeadingLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.clearHistoryBtn {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  padding: var(--space-1) var(--space-2);
+}
+
+.clearHistoryBtn:hover {
+  text-decoration: underline;
 }
 
 .contextBlock {

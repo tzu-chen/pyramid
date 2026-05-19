@@ -7,10 +7,24 @@ export interface ContextBlock {
   content: string;
 }
 
+export interface ClaudeMessage {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  display_prompt: string | null;
+  mode: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  created_at: string;
+}
+
 export interface ClaudeAskResponse {
   response: string;
   input_tokens: number;
   output_tokens: number;
+  user_message: ClaudeMessage;
+  assistant_message: ClaudeMessage;
 }
 
 export interface ScribeFlowchart {
@@ -39,6 +53,15 @@ export const claudeService = {
       context,
       mode,
     });
+  },
+
+  async getHistory(sessionId: string): Promise<ClaudeMessage[]> {
+    const res = await api.get<{ messages: ClaudeMessage[] }>(`/sessions/${sessionId}/claude/history`);
+    return res.messages;
+  },
+
+  async clearHistory(sessionId: string): Promise<void> {
+    await api.delete(`/sessions/${sessionId}/claude/history`);
   },
 };
 

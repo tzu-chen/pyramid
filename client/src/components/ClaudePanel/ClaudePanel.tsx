@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { claudeService, scribeService, type ClaudeMode, type ContextBlock, type ScribeNode } from '../../services/claudeService';
+import {
+  claudeService,
+  scribeService,
+  type ClaudeMode,
+  type ClaudeMessage,
+  type ContextBlock,
+  type ScribeNode,
+} from '../../services/claudeService';
 import { LspDiagnostic } from '../CodeEditor/CodeEditor';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { SessionLink } from '../../types';
@@ -42,8 +49,7 @@ function ClaudePanel({
   const [contextBlocks, setContextBlocks] = useState<(ContextBlock & { editing?: boolean })[]>([]);
   const [mode, setMode] = useState<ClaudeMode>('general');
   const [prompt, setPrompt] = useState('');
-  const [response, setResponse] = useState('');
-  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number } | null>(null);
+  const [history, setHistory] = useState<ClaudeMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [addingScribe, setAddingScribe] = useState(false);
@@ -51,6 +57,7 @@ function ClaudePanel({
   const [scribeResults, setScribeResults] = useState<ScribeNode[]>([]);
   const [scribeSearching, setScribeSearching] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   // Expose focus function
   useEffect(() => {
@@ -59,17 +66,29 @@ function ClaudePanel({
     }
   }, [promptFocusRef]);
 
+  // Load persisted chat history when session changes
+  useEffect(() => {
+    let cancelled = false;
+    claudeService.getHistory(sessionId)
+      .then(msgs => { if (!cancelled) setHistory(msgs); })
+      .catch(() => { if (!cancelled) setHistory([]); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  // Scroll transcript to bottom when history changes
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [history.length, loading]);
+
   // Auto-assemble context blocks when panel data changes
   useEffect(() => {
     const blocks: ContextBlock[] = [];
 
-    // Current file — always included
     if (fileContent) {
       blocks.push({ label: `Current file: ${fileName}`, content: fileContent });
     }
 
     if (sessionType === 'lean') {
-      // Diagnostics
       if (diagnostics && diagnostics.length > 0) {
         const diagText = diagnostics.map(d => {
           const severity = d.severity === 1 ? 'Error' : d.severity === 2 ? 'Warning' : d.severity === 3 ? 'Info' : 'Hint';
@@ -77,13 +96,10 @@ function ClaudePanel({
         }).join('\n');
         blocks.push({ label: 'Diagnostics', content: diagText });
       }
-
-      // Goal state
       if (goalState) {
         blocks.push({ label: 'Goal state', content: goalState });
       }
     } else {
-      // Freeform: last run with errors
       if (lastRun && (lastRun.exit_code !== 0 || lastRun.stderr)) {
         let output = '';
         if (lastRun.stdout) output += `stdout:\n${lastRun.stdout}\n\n`;
@@ -94,7 +110,6 @@ function ClaudePanel({
 
     setContextBlocks(blocks);
 
-    // Auto-set mode based on context
     const hasErrors = sessionType === 'lean'
       ? diagnostics && diagnostics.some(d => d.severity === 1)
       : lastRun && (lastRun.exit_code !== 0 || lastRun.stderr);
@@ -109,15 +124,12 @@ function ClaudePanel({
     if (!links) return;
     const scribeLinks = links.filter(l => l.app === 'scribe' && l.ref_type === 'flowchart_node');
     for (const link of scribeLinks) {
-      // ref_id is "flowchartId:nodeKey" or just nodeKey depending on how it's stored
-      // Try to fetch it as a search by label
       if (link.label) {
         scribeService.searchNodes(link.label).then(nodes => {
           if (nodes.length > 0) {
             const node = nodes[0];
             const content = formatScribeNode(node);
             setContextBlocks(prev => {
-              // Don't add duplicates
               if (prev.some(b => b.label === `Scribe: ${node.title}`)) return prev;
               return [...prev, { label: `Scribe: ${node.title}`, content }];
             });
@@ -179,12 +191,23 @@ function ClaudePanel({
     try {
       const blocks = contextBlocks.map(({ label, content }) => ({ label, content }));
       const result = await claudeService.ask(sessionId, prompt.trim(), blocks, mode);
-      setResponse(result.response);
-      setTokenUsage({ input: result.input_tokens, output: result.output_tokens });
+      setHistory(prev => [...prev, result.user_message, result.assistant_message]);
+      setPrompt('');
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (history.length === 0) return;
+    if (!confirm('Clear the entire Claude chat history for this session? This cannot be undone.')) return;
+    try {
+      await claudeService.clearHistory(sessionId);
+      setHistory([]);
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -220,8 +243,37 @@ function ClaudePanel({
 
   return (
     <div className={styles.panel}>
+      {/* Chat transcript */}
+      <div className={styles.transcript}>
+        {history.length === 0 && !loading && (
+          <div className={styles.transcriptEmpty}>
+            No messages yet. Add context below and ask Claude anything about this session.
+          </div>
+        )}
+        {history.map(msg => (
+          <ChatTurn
+            key={msg.id}
+            message={msg}
+            onCopy={handleCopyCode}
+            onApply={onApplyCode}
+          />
+        ))}
+        {loading && (
+          <div className={styles.loadingRow}>Claude is thinking…</div>
+        )}
+        <div ref={transcriptEndRef} />
+      </div>
+
       {/* Context blocks */}
       <div className={styles.contextArea}>
+        <div className={styles.contextHeading}>
+          <span className={styles.contextHeadingLabel}>Context for next message</span>
+          {history.length > 0 && (
+            <button className={styles.clearHistoryBtn} onClick={handleClearHistory} title="Clear chat history">
+              Clear history
+            </button>
+          )}
+        </div>
         {contextBlocks.map((block, i) => (
           <div key={i} className={styles.contextBlock}>
             <div className={styles.contextHeader}>
@@ -320,22 +372,46 @@ function ClaudePanel({
 
       {/* Error */}
       {error && <div className={styles.errorMsg}>{error}</div>}
+    </div>
+  );
+}
 
-      {/* Response */}
-      {response && (
-        <div className={styles.responseArea}>
-          <ResponseRenderer
-            content={response}
-            onCopy={handleCopyCode}
-            onApply={onApplyCode}
-          />
-          {tokenUsage && (
-            <div className={styles.tokenUsage}>
-              {tokenUsage.input.toLocaleString()} in / {tokenUsage.output.toLocaleString()} out
-            </div>
+/** Renders a single chat turn (user or assistant). */
+function ChatTurn({
+  message,
+  onCopy,
+  onApply,
+}: {
+  message: ClaudeMessage;
+  onCopy: (code: string) => void;
+  onApply?: (code: string) => void;
+}) {
+  const isUser = message.role === 'user';
+  const displayContent = isUser ? (message.display_prompt ?? message.content) : message.content;
+  const timestamp = new Date(message.created_at).toLocaleString();
+
+  return (
+    <div className={`${styles.turn} ${isUser ? styles.turnUser : styles.turnAssistant}`}>
+      <div className={styles.turnHeader}>
+        <span className={styles.turnRole}>{isUser ? 'You' : 'Claude'}</span>
+        <span className={styles.turnMeta}>
+          {timestamp}
+          {!isUser && message.input_tokens !== null && message.output_tokens !== null && (
+            <> · {message.input_tokens.toLocaleString()} in / {message.output_tokens.toLocaleString()} out</>
           )}
-        </div>
-      )}
+        </span>
+      </div>
+      <div className={styles.turnBody}>
+        {isUser ? (
+          <pre className={styles.userText}>{displayContent}</pre>
+        ) : (
+          <ResponseRenderer
+            content={displayContent}
+            onCopy={onCopy}
+            onApply={onApply}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -350,7 +426,6 @@ function ResponseRenderer({
   onCopy: (code: string) => void;
   onApply?: (code: string) => void;
 }) {
-  // Split content into text and code blocks
   const parts = content.split(/(```[\s\S]*?```)/g);
 
   return (

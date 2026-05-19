@@ -102,6 +102,19 @@ db.exec(`
     message TEXT NOT NULL,
     FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS claude_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    display_prompt TEXT,
+    mode TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
 `);
 
 // Create indices
@@ -116,6 +129,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_builds_session ON builds(session_id);
   CREATE INDEX IF NOT EXISTS idx_builds_created ON builds(created_at);
   CREATE INDEX IF NOT EXISTS idx_build_diagnostics_build ON build_diagnostics(build_id);
+  CREATE INDEX IF NOT EXISTS idx_claude_messages_session ON claude_messages(session_id, created_at);
 `);
 
 // Migration: add build_id column to execution_runs (nullable, no FK to keep migrations
