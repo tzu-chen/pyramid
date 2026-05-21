@@ -258,15 +258,23 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     if (!nb) return;
     const cell = nb.cells.find(c => c.id === cellId);
     if (!cell || cell.cell_type !== 'code') return;
-    // clear outputs for this cell then send
+    const sourceAtRun = cell.source;
+    // clear outputs for this cell then send; record source so we can detect edits since last run
     setNotebook(prev => {
       if (!prev) return prev;
       return {
         ...prev,
-        cells: prev.cells.map(c => c.id === cellId ? { ...c, outputs: [], execution_count: null } : c),
+        cells: prev.cells.map(c => c.id === cellId
+          ? {
+              ...c,
+              outputs: [],
+              execution_count: null,
+              metadata: { ...(c.metadata || {}), last_run_source: sourceAtRun },
+            }
+          : c),
       };
     });
-    kernel.executeCell(cellId, cell.source);
+    kernel.executeCell(cellId, sourceAtRun);
   }, [kernel]);
 
   const runAll = useCallback(() => {
@@ -284,21 +292,6 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         ...prev,
         cells: prev.cells.map(c => c.id === cellId ? { ...c, source } : c),
       };
-    });
-  }, []);
-
-  const insertCell = useCallback((afterId: string | null, type: CellType) => {
-    setNotebook(prev => {
-      if (!prev) return prev;
-      const newCell: NotebookCell = { id: newId(), cell_type: type, source: '', outputs: [], execution_count: null };
-      if (afterId === null) {
-        return { ...prev, cells: [newCell, ...prev.cells] };
-      }
-      const idx = prev.cells.findIndex(c => c.id === afterId);
-      const next = [...prev.cells];
-      next.splice(idx + 1, 0, newCell);
-      setActiveCellId(newCell.id);
-      return { ...prev, cells: next };
     });
   }, []);
 
@@ -576,7 +569,6 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               onDelete={() => deleteCell(cell.id)}
               onMoveUp={() => moveCell(cell.id, -1)}
               onMoveDown={() => moveCell(cell.id, 1)}
-              onInsertBelow={(type) => insertCell(cell.id, type)}
               onChangeType={(type) => changeCellType(cell.id, type)}
               onToggleOutputs={() => toggleOutputsCollapsed(cell.id)}
               onToggleSection={headingLevel > 0 ? () => toggleSectionCollapsed(cell.id) : undefined}
@@ -585,11 +577,6 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
             />
           );
         })}
-      </div>
-
-      <div className={styles.addCellBar}>
-        <button onClick={() => insertCell(notebook.cells[notebook.cells.length - 1]?.id ?? null, 'code')}>+ Code</button>
-        <button onClick={() => insertCell(notebook.cells[notebook.cells.length - 1]?.id ?? null, 'markdown')}>+ Markdown</button>
       </div>
     </div>
   );
@@ -612,7 +599,6 @@ interface CellViewProps {
   onDelete: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
-  onInsertBelow: (type: CellType) => void;
   onChangeType: (type: CellType) => void;
   onToggleOutputs: () => void;
   onToggleSection?: () => void;
@@ -621,8 +607,15 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onInsertBelow, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
-  const outputsCollapsed = !!(cell.metadata as Record<string, unknown> | undefined)?.collapsed;
+  const { cell, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
+  const meta = (cell.metadata || {}) as Record<string, unknown>;
+  const outputsCollapsed = !!meta.collapsed;
+  const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
+  const upToDate =
+    cell.cell_type === 'code' &&
+    !running &&
+    lastRunSource !== undefined &&
+    lastRunSource === cell.source;
   const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
   const executionMark = cell.cell_type === 'code'
@@ -632,7 +625,7 @@ function CellView(props: CellViewProps) {
   return (
     <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
       <div
-        className={`${styles.cell} ${active ? styles.cellActive : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
+        className={`${styles.cell} ${active ? styles.cellActive : ''} ${upToDate ? styles.cellUpToDate : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
         data-cell-id={cell.id}
         onClick={onFocus}
       >
@@ -741,10 +734,6 @@ function CellView(props: CellViewProps) {
             )}
           </div>
         </div>
-      </div>
-      <div className={styles.insertBelow}>
-        <button onClick={() => onInsertBelow('code')}>+ code below</button>
-        <button onClick={() => onInsertBelow('markdown')}>+ md below</button>
       </div>
     </div>
   );
