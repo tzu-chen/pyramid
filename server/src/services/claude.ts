@@ -7,6 +7,7 @@ interface ClaudeRequest {
   messages: ClaudeMessage[];
   system?: string;
   max_tokens?: number;
+  model?: string;
 }
 
 interface ClaudeResponse {
@@ -15,9 +16,11 @@ interface ClaudeResponse {
   output_tokens: number;
 }
 
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
+
 export async function callClaude(request: ClaudeRequest, apiKey: string): Promise<ClaudeResponse> {
   const body = {
-    model: 'claude-sonnet-4-20250514',
+    model: request.model ?? DEFAULT_CLAUDE_MODEL,
     max_tokens: request.max_tokens ?? 4096,
     system: request.system,
     messages: request.messages,

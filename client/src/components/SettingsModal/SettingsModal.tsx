@@ -13,6 +13,14 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
+const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
+
+const CLAUDE_MODEL_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: 'claude-opus-4-7', label: 'Opus 4.7 (default)' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+];
+
 function SettingsModal({ onClose }: SettingsModalProps) {
   const { schemeId, setScheme, autoSwitch, setAutoSwitch } = useTheme();
   const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
@@ -25,6 +33,7 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
+  const [model, setModel] = useState<string>(DEFAULT_CLAUDE_MODEL);
 
   const overlayMouseDownRef = useRef(false);
 
@@ -34,7 +43,21 @@ function SettingsModal({ onClose }: SettingsModalProps) {
         setHasKey(true);
       }
     }).catch(() => {});
+    settingsService.get('claude_model').then(setting => {
+      if (setting?.value) {
+        setModel(setting.value);
+      }
+    }).catch(() => {});
   }, []);
+
+  const handleModelChange = async (next: string) => {
+    setModel(next);
+    try {
+      await settingsService.set('claude_model', next);
+    } catch {
+      // Silent fail; user can retry by reselecting.
+    }
+  };
 
   const handleSave = async () => {
     if (!apiKey.trim()) return;
@@ -221,7 +244,27 @@ function SettingsModal({ onClose }: SettingsModalProps) {
           </section>
 
           <section className={styles.section}>
-            <h3 className={styles.sectionTitle}>Claude API Key</h3>
+            <h3 className={styles.sectionTitle}>Claude</h3>
+
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Model</span>
+                <span className={styles.rowDesc}>Used for Claude chat in every session</span>
+              </div>
+              <select
+                className={styles.modelSelect}
+                value={CLAUDE_MODEL_OPTIONS.some(opt => opt.id === model) ? model : ''}
+                onChange={e => handleModelChange(e.target.value)}
+              >
+                {!CLAUDE_MODEL_OPTIONS.some(opt => opt.id === model) && (
+                  <option value="" disabled>{model}</option>
+                )}
+                {CLAUDE_MODEL_OPTIONS.map(opt => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
             <div className={styles.keyStatus}>
               Status: {hasKey ? (
                 <span className={styles.keySet}>Configured</span>

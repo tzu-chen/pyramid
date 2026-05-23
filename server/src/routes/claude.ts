@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db.js';
-import { callClaude } from '../services/claude.js';
+import { callClaude, DEFAULT_CLAUDE_MODEL } from '../services/claude.js';
 import { getSystemPrompt, type ClaudeMode } from '../services/claude-prompts.js';
 
 const router = Router();
@@ -115,10 +115,14 @@ router.post('/:id/claude/ask', async (req: Request, res: Response) => {
       .map((m) => ({ role: m.role, content: m.content }))
       .concat([{ role: 'user' as const, content: userContent }]);
 
+    const modelSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('claude_model') as { value: string } | undefined;
+    const model = modelSetting?.value?.trim() || DEFAULT_CLAUDE_MODEL;
+
     const result = await callClaude(
       {
         messages,
         system: systemPrompt,
+        model,
       },
       setting.value
     );
