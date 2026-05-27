@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  cppBuildService,
   type ArtifactNode,
   type ArtifactKind,
   type ArtifactTextResult,
@@ -8,13 +7,27 @@ import {
 import { ChevronRightIcon, ChevronDownIcon, DiamondIcon } from '../Icons/Icons';
 import styles from './ArtifactBrowser.module.css';
 
+// Minimal interface this component needs from a build service. Both
+// cppBuildService and duneBuildService satisfy it; the component itself
+// stays build-system-agnostic apart from a root directory label.
+export interface ArtifactBrowserService {
+  artifactTree(sessionId: string): Promise<{ tree: ArtifactNode[] }>;
+  artifactText(sessionId: string, relPath: string): Promise<ArtifactTextResult>;
+  artifactDownloadUrl(sessionId: string, relPath: string): string;
+}
+
 interface ArtifactBrowserProps {
   sessionId: string;
   // Bumped by SessionPage after a successful build to force a reload.
   refreshKey: number;
+  // Build-system service (cppBuildService / duneBuildService).
+  service: ArtifactBrowserService;
+  // Label shown in the header (e.g. 'build/' for CMake, '_build/' for dune).
+  rootLabel?: string;
 }
 
-const KIND_LABEL: Record<ArtifactKind, string> = {
+// All kinds across cpp + dune. Unknown kinds fall back to 'bin'.
+const KIND_LABEL: Record<string, string> = {
   dir: 'dir',
   executable: 'exe',
   object: 'obj',
@@ -22,6 +35,9 @@ const KIND_LABEL: Record<ArtifactKind, string> = {
   shared_lib: 'so',
   compile_commands: 'json',
   cmake: 'cmake',
+  interface: 'cmi',
+  bytecode: 'cmo',
+  dune: 'dune',
   text: 'text',
   binary: 'bin',
 };
@@ -61,7 +77,7 @@ interface ViewerState {
   error: string | null;
 }
 
-export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrowserProps) {
+export default function ArtifactBrowser({ sessionId, refreshKey, service, rootLabel }: ArtifactBrowserProps) {
   const [tree, setTree] = useState<ArtifactNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +88,7 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
     setLoading(true);
     setError(null);
     try {
-      const { tree: t } = await cppBuildService.artifactTree(sessionId);
+      const { tree: t } = await service.artifactTree(sessionId);
       setTree(t);
       // First load: expand top-level flavor dirs (Debug, Release, …).
       setExpanded((prev) => {
@@ -86,7 +102,7 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, service]);
 
   useEffect(() => { reload(); }, [reload, refreshKey]);
 
@@ -111,18 +127,18 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
     if (node.isDir) return;
     if (!isInlineViewable(node.kind)) {
       // For binaries, executables, objects, archives — download in a new tab.
-      const url = cppBuildService.artifactDownloadUrl(sessionId, node.path);
+      const url = service.artifactDownloadUrl(sessionId, node.path);
       window.open(url, '_blank', 'noopener,noreferrer');
       return;
     }
     setViewer({ path: node.path, name: node.name, kind: node.kind, result: null, loading: true, error: null });
     try {
-      const result = await cppBuildService.artifactText(sessionId, node.path);
+      const result = await service.artifactText(sessionId, node.path);
       setViewer({ path: node.path, name: node.name, kind: node.kind, result, loading: false, error: null });
     } catch (e) {
       setViewer({ path: node.path, name: node.name, kind: node.kind, result: null, loading: false, error: (e as Error).message });
     }
-  }, [sessionId]);
+  }, [sessionId, service]);
 
   const totalCount = useMemo(() => {
     let n = 0;
@@ -139,7 +155,7 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <div className={styles.title}>build/</div>
+        <div className={styles.title}>{rootLabel ?? 'build/'}</div>
         <div className={styles.headerActions}>
           <span className={styles.headerMeta}>{totalCount} {totalCount === 1 ? 'entry' : 'entries'}</span>
           <button className={styles.btn} onClick={expandAll} disabled={tree.length === 0}>Expand</button>
@@ -152,7 +168,7 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
 
       {tree.length === 0 && !loading && !error && (
         <div className={styles.empty}>
-          No build artifacts yet. Click <strong>Build</strong> to populate <code>build/</code>.
+          No build artifacts yet. Click <strong>Build</strong> to populate <code>{rootLabel ?? 'build/'}</code>.
         </div>
       )}
 
@@ -182,7 +198,7 @@ export default function ArtifactBrowser({ sessionId, refreshKey }: ArtifactBrows
             )}
             <a
               className={styles.viewerDownload}
-              href={cppBuildService.artifactDownloadUrl(sessionId, viewer.path)}
+              href={service.artifactDownloadUrl(sessionId, viewer.path)}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -209,6 +225,9 @@ function kindClass(kind: ArtifactKind): string {
     case 'shared_lib':       return styles.kindShared;
     case 'compile_commands': return styles.kindCompileCommands;
     case 'cmake':            return styles.kindCmake;
+    case 'interface':        return styles.kindCmake;
+    case 'bytecode':         return styles.kindObject;
+    case 'dune':             return styles.kindCmake;
     case 'text':             return styles.kindText;
     case 'binary':           return styles.kindBinary;
     default:                 return '';

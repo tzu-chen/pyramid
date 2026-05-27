@@ -1,14 +1,15 @@
 import { api } from './api';
 import { ExecutionRun } from '../types';
 import type { BuildFlavor, ExecuteResult } from './cppBuildService';
+import type { DuneFlavor } from './duneBuildService';
 
 export const executionService = {
   /**
    * Execute the active file. For C++ sessions containing a CMakeLists.txt, the
    * server runs the CMake build/run dispatch and returns a discriminated
-   * `ExecuteResult` instead of the bare ExecutionRun. Callers that don't care
-   * can keep using the result directly — `kind: undefined` matches the legacy
-   * single-file shape.
+   * `ExecuteResult`. For OCaml sessions containing a dune-project, the dune
+   * dispatch runs instead — same response shape. Single-file path returns the
+   * bare ExecutionRun (kind=undefined).
    */
   async execute(
     sessionId: string,
@@ -16,7 +17,7 @@ export const executionService = {
       file_id?: string;
       timeout_ms?: number;
       stdin?: string;
-      flavor?: BuildFlavor;
+      flavor?: BuildFlavor | DuneFlavor;
       target?: string;
       args?: string[];
       reconfigure?: boolean;

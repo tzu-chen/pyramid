@@ -7,6 +7,10 @@ import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
 import { cppLsp } from '../services/cpp-lsp.js';
 import { cppProject } from '../services/cpp-project.js';
+import { ocamlLsp } from '../services/ocaml-lsp.js';
+import { ocamlProject } from '../services/ocaml-project.js';
+import { ocamlDap } from '../services/ocaml-dap.js';
+import { symlinkPath } from '../services/bc-fixup.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
 import { terminal } from '../services/terminal.js';
 
@@ -132,7 +136,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Create default file based on session type / language
     const isNotebook = session_type === 'notebook';
-    const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : 'py';
+    const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : language === 'ocaml' ? 'ml' : 'py';
     const defaultFilename = isLean ? 'Main.lean' : isNotebook ? 'notebook.ipynb' : `main.${ext}`;
     const fileId = uuidv4();
     const fileType = isNotebook ? 'source' : 'source';
@@ -163,6 +167,11 @@ router.post('/', async (req: Request, res: Response) => {
     // C++ freeform: drop a default .clangd so single-file LSP works out of the box
     if (!isLean && !isNotebook && language === 'cpp') {
       cppProject.ensureClangdConfig(absWorkingDir);
+    }
+
+    // OCaml freeform: drop a default .ocamlformat / .merlin so single-file LSP works
+    if (!isLean && !isNotebook && language === 'ocaml') {
+      ocamlProject.ensureDefaults(absWorkingDir);
     }
 
     // Handle Lean session: scaffold Lake project and insert metadata
@@ -245,6 +254,15 @@ router.delete('/:id', (req: Request, res: Response) => {
     if (session.session_type === 'freeform') {
       terminal.killSession(req.params.id as string);
       cppLsp.stopLsp(req.params.id as string);
+      ocamlLsp.stopLsp(req.params.id as string);
+      ocamlDap.stop(req.params.id as string);
+      // Remove the per-session bytecode-debug symlink in /tmp (created by
+      // bc-fixup post-build for OCaml debug). Safe to call for non-OCaml
+      // sessions — it just no-ops if the symlink isn't present.
+      try {
+        const link = symlinkPath(req.params.id as string);
+        if (fs.existsSync(link)) fs.unlinkSync(link);
+      } catch { /* best-effort */ }
     }
 
     // Delete working directory

@@ -87,6 +87,7 @@ function NewSessionPage() {
             <select className={styles.select} value={language} onChange={e => setLanguage(e.target.value)}>
               <option value="python">Python</option>
               <option value="cpp">C++</option>
+              <option value="ocaml">OCaml</option>
               <option value="julia">Julia</option>
             </select>
           </div>

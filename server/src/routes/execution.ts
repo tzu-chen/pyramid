@@ -24,6 +24,27 @@ import {
   type BuildResult,
   type CompilerDiagnostic,
 } from '../services/cpp-build.js';
+import {
+  isDuneProject,
+  ensureBuilt as duneEnsureBuilt,
+  runBinary as duneRunBinary,
+  pickBinary as dunePickBinary,
+  validateFlavor as duneValidateFlavor,
+  flavorDirName as duneFlavorDirName,
+  cleanFlavor as duneCleanFlavor,
+  cleanAll as duneCleanAll,
+  listDuneTargets,
+  listArtifactTree as duneListArtifactTree,
+  resolveArtifactPath as duneResolveArtifactPath,
+  statArtifact as duneStatArtifact,
+  readArtifactText as duneReadArtifactText,
+  type DuneFlavor,
+  type DuneBuildResult,
+  type DuneDiagnostic,
+  type DuneProfile,
+} from '../services/dune-build.js';
+import { listBytecodeTargets } from '../services/ocaml-dap.js';
+import { rewriteBytecodeFiles } from '../services/bc-fixup.js';
 
 const router = Router();
 
@@ -46,6 +67,14 @@ function parseFlavor(input: unknown): BuildFlavor {
   return { buildType, sanitizers };
 }
 
+function parseDuneFlavor(input: unknown): DuneFlavor {
+  const fallback: DuneFlavor = { profile: 'dev' };
+  if (!input || typeof input !== 'object') return fallback;
+  const obj = input as Record<string, unknown>;
+  const profile = (obj.profile as DuneProfile) ?? fallback.profile;
+  return { profile };
+}
+
 function persistBuild(
   sessionId: string,
   flavor: BuildFlavor,
@@ -66,6 +95,43 @@ function persistBuild(
       buildId,
       sessionId,
       flavorDirName(flavor),
+      result.success ? 1 : 0,
+      result.durationMs,
+      result.diagnostics.length,
+      result.log,
+      now,
+    );
+    for (const d of result.diagnostics) {
+      insertDiag.run(uuidv4(), buildId, d.file, d.line, d.column, d.severity, d.message);
+    }
+  });
+  tx();
+  return buildId;
+}
+
+// Same builds/build_diagnostics tables; flavor column holds dune profile names
+// ('dev' / 'release') instead of cmake flavor dirs. Sessions are typed by
+// language, so the two flavor namespaces don't collide within a session.
+function persistDuneBuild(
+  sessionId: string,
+  flavor: DuneFlavor,
+  result: DuneBuildResult,
+): string {
+  const buildId = uuidv4();
+  const now = getCstTimestamp();
+  const insertBuild = db.prepare(`
+    INSERT INTO builds (id, session_id, flavor, success, duration_ms, diagnostic_count, log, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertDiag = db.prepare(`
+    INSERT INTO build_diagnostics (id, build_id, file, line, col, severity, message)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const tx = db.transaction(() => {
+    insertBuild.run(
+      buildId,
+      sessionId,
+      duneFlavorDirName(flavor),
       result.success ? 1 : 0,
       result.durationMs,
       result.diagnostics.length,
@@ -126,9 +192,11 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
     const absWorkingDir = sessionAbsDir(session.working_dir as string);
     const language = (file?.language as string) || (session.language as string);
     const isCpp = language === 'cpp';
+    const isOcaml = language === 'ocaml';
     const useCmake = isCpp && isCmakeProject(absWorkingDir);
+    const useDune = isOcaml && isDuneProject(absWorkingDir);
 
-    const defaultTimeout = useCmake ? 120000 : 30000;
+    const defaultTimeout = (useCmake || useDune) ? 120000 : 30000;
     const timeout = timeout_ms || defaultTimeout;
 
     if (useCmake) {
@@ -208,6 +276,104 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
         kind: 'ran',
         build_id: buildId,
         flavor: flavorDirName(flavor),
+        success: true,
+        diagnostics: build.diagnostics,
+        build_log: build.log,
+        build_duration_ms: build.durationMs,
+        binary_path: binary,
+        run: persistedRun,
+      });
+      return;
+    }
+
+    if (useDune) {
+      const flavor = parseDuneFlavor(flavorIn);
+      const v = duneValidateFlavor(flavor);
+      if (!v.valid) {
+        res.status(400).json({ error: v.error });
+        return;
+      }
+
+      // Need a file_id for the execution_runs row (NOT NULL).
+      const runFile = file ?? (db.prepare('SELECT * FROM session_files WHERE session_id = ? AND is_primary = 1').get(req.params.id) as Record<string, unknown> | undefined);
+      if (!runFile) {
+        res.status(400).json({ error: 'Session has no files; create one before running' });
+        return;
+      }
+
+      const build = await duneEnsureBuilt(absWorkingDir, flavor, { ...flavor, target });
+      const buildId = persistDuneBuild(req.params.id as string, flavor, build);
+
+      // Post-build: rewrite dune's /workspace_root placeholder in any .bc
+      // files so the OCaml debugger can find the real source. No-op on
+      // failed builds (no fresh artifacts to patch) and on projects without
+      // bytecode targets (the file walk just finds nothing).
+      if (build.success) {
+        try {
+          rewriteBytecodeFiles(path.join(absWorkingDir, '_build'), req.params.id as string, absWorkingDir);
+        } catch (err) {
+          console.error(`[bc-fixup] ${(err as Error).message}`);
+        }
+      }
+
+      if (!build.success) {
+        res.json({
+          kind: 'build_failed',
+          build_id: buildId,
+          flavor: duneFlavorDirName(flavor),
+          success: false,
+          diagnostics: build.diagnostics,
+          log: build.log,
+          duration_ms: build.durationMs,
+        });
+        return;
+      }
+
+      const binary = dunePickBinary(build.binaryPaths, target);
+      if (!binary) {
+        res.json({
+          kind: 'no_binary',
+          build_id: buildId,
+          flavor: duneFlavorDirName(flavor),
+          success: false,
+          diagnostics: build.diagnostics,
+          log: build.log + '\n[run] no executable produced — add an (executable ...) stanza or specify a target',
+          duration_ms: build.durationMs,
+        });
+        return;
+      }
+
+      const run = await duneRunBinary(binary, absWorkingDir, {
+        args: Array.isArray(args) ? args : undefined,
+        stdin,
+        timeoutMs: timeout,
+      });
+
+      const runId = uuidv4();
+      const now = getCstTimestamp();
+      db.prepare(`
+        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        runId,
+        req.params.id,
+        runFile.id as string,
+        run.command,
+        run.exitCode,
+        run.stdout,
+        run.stderr,
+        run.durationMs,
+        now,
+        buildId,
+        binary,
+        duneFlavorDirName(flavor),
+      );
+
+      const persistedRun = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
+      res.json({
+        kind: 'ran',
+        build_id: buildId,
+        flavor: duneFlavorDirName(flavor),
         success: true,
         diagnostics: build.diagnostics,
         build_log: build.log,
@@ -453,6 +619,223 @@ router.post('/:id/cmake/clean', (req: Request, res: Response) => {
     }
     const removed = cleanFlavor(dir, flavor);
     res.json({ removed, scope: flavorDirName(flavor) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ----- Dune-specific endpoints (OCaml) -----
+
+function loadDuneSessionDir(req: Request, res: Response): string | null {
+  const session = db.prepare('SELECT working_dir, language FROM sessions WHERE id = ?').get(req.params.id) as { working_dir: string; language: string } | undefined;
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return null;
+  }
+  if (session.language !== 'ocaml') {
+    res.status(400).json({ error: 'Session is not an OCaml session' });
+    return null;
+  }
+  return sessionAbsDir(session.working_dir);
+}
+
+// GET /api/sessions/:id/dune/status
+router.get('/:id/dune/status', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    res.json({
+      is_dune_project: isDuneProject(dir),
+      project_path: dir,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/dune/build
+router.post('/:id/dune/build', async (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    if (!isDuneProject(dir)) {
+      res.status(400).json({ error: 'No dune-project in session root' });
+      return;
+    }
+    const flavor = parseDuneFlavor(req.body?.flavor);
+    const v = duneValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const result = await duneEnsureBuilt(dir, flavor, {
+      ...flavor,
+      target: req.body?.target,
+      jobs: req.body?.jobs,
+    });
+    const buildId = persistDuneBuild(req.params.id as string, flavor, result);
+    // Mirror the post-build fixup from the /execute path so the Build button
+    // also produces debug-ready bytecode.
+    if (result.success) {
+      try {
+        rewriteBytecodeFiles(path.join(dir, '_build'), req.params.id as string, dir);
+      } catch (err) {
+        console.error(`[bc-fixup] ${(err as Error).message}`);
+      }
+    }
+    res.json({
+      build_id: buildId,
+      flavor: duneFlavorDirName(flavor),
+      success: result.success,
+      duration_ms: result.durationMs,
+      diagnostics: result.diagnostics,
+      log: result.log,
+      binary_paths: result.binaryPaths,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/builds
+router.get('/:id/dune/builds', (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const builds = db.prepare(`
+      SELECT id, session_id, flavor, success, duration_ms, diagnostic_count, created_at
+      FROM builds WHERE session_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(req.params.id, limit);
+    res.json(builds);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/builds/:buildId
+router.get('/:id/dune/builds/:buildId', (req: Request, res: Response) => {
+  try {
+    const build = db.prepare('SELECT * FROM builds WHERE id = ? AND session_id = ?').get(req.params.buildId, req.params.id);
+    if (!build) {
+      res.status(404).json({ error: 'Build not found' });
+      return;
+    }
+    const diagnostics = db.prepare('SELECT file, line, col AS column, severity, message FROM build_diagnostics WHERE build_id = ?').all(req.params.buildId) as DuneDiagnostic[];
+    res.json({ ...build, diagnostics });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/binaries?profile=dev
+router.get('/:id/dune/binaries', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    const flavor = parseDuneFlavor({ profile: req.query.profile ?? 'dev' });
+    const v = duneValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const binaries = listDuneTargets(dir, flavor);
+    res.json({ flavor: duneFlavorDirName(flavor), binaries });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/artifacts
+router.get('/:id/dune/artifacts', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    res.json({ tree: duneListArtifactTree(dir) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/artifacts/content?path=<rel>
+router.get('/:id/dune/artifacts/content', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const result = duneReadArtifactText(dir, rel);
+    if (!result) {
+      res.status(404).json({ error: 'Artifact not found or not readable' });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/dune/artifacts/download?path=<rel>
+router.get('/:id/dune/artifacts/download', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const info = duneStatArtifact(dir, rel);
+    if (!info || info.isDir) {
+      res.status(404).json({ error: 'Artifact not found' });
+      return;
+    }
+    const abs = duneResolveArtifactPath(dir, rel);
+    if (!abs) {
+      res.status(400).json({ error: 'Invalid artifact path' });
+      return;
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="${info.name.replace(/"/g, '')}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(info.size));
+    fs.createReadStream(abs).pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/debug/binaries?profile=dev
+//
+// List bytecode targets available for debugging. Empty list means the user
+// hasn't built any (modes byte) executables — the client surfaces that.
+router.get('/:id/debug/binaries', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    const profile = String(req.query.profile ?? 'dev');
+    if (profile !== 'dev' && profile !== 'release') {
+      res.status(400).json({ error: `Invalid dune profile: ${profile}` });
+      return;
+    }
+    const binaries = listBytecodeTargets(dir, profile);
+    res.json({ profile, binaries });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/dune/clean
+router.post('/:id/dune/clean', (req: Request, res: Response) => {
+  try {
+    const dir = loadDuneSessionDir(req, res);
+    if (!dir) return;
+    const all = !!req.body?.all;
+    if (all) {
+      const removed = duneCleanAll(dir);
+      res.json({ removed, scope: 'all' });
+      return;
+    }
+    const flavor = parseDuneFlavor(req.body?.flavor);
+    const v = duneValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const removed = duneCleanFlavor(dir, flavor);
+    res.json({ removed, scope: duneFlavorDirName(flavor) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

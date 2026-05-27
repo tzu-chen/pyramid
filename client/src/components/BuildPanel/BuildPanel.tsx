@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
-  cppBuildService,
   type BuildResponse,
   type BuildHistoryEntry,
   type CompilerDiagnostic,
@@ -13,8 +12,13 @@ interface BuildPanelProps {
   latest: BuildResponse | null;
   // Refresh signal — increment to force a history reload.
   refreshKey: number;
+  // Fetches paginated build history. Caller supplies the build-system-specific
+  // implementation (cppBuildService.history / duneBuildService.history).
+  fetchHistory: (sessionId: string, limit: number) => Promise<BuildHistoryEntry[]>;
   // Click a diagnostic → jump in the editor.
   onDiagnosticClick?: (d: CompilerDiagnostic) => void;
+  // Optional text shown when no build has been triggered yet.
+  emptyPlaceholder?: string;
 }
 
 function severityClass(sev: CompilerDiagnostic['severity']): string {
@@ -23,20 +27,20 @@ function severityClass(sev: CompilerDiagnostic['severity']): string {
   return styles.diagNote;
 }
 
-export default function BuildPanel({ sessionId, latest, refreshKey, onDiagnosticClick }: BuildPanelProps) {
+export default function BuildPanel({ sessionId, latest, refreshKey, fetchHistory, onDiagnosticClick, emptyPlaceholder }: BuildPanelProps) {
   const [history, setHistory] = useState<BuildHistoryEntry[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [logExpanded, setLogExpanded] = useState(false);
 
   const loadHistory = useCallback(async () => {
     try {
-      const list = await cppBuildService.history(sessionId, 20);
+      const list = await fetchHistory(sessionId, 20);
       setHistory(list);
       setHistoryError(null);
     } catch (e) {
       setHistoryError((e as Error).message);
     }
-  }, [sessionId]);
+  }, [sessionId, fetchHistory]);
 
   useEffect(() => {
     loadHistory();
@@ -106,7 +110,7 @@ export default function BuildPanel({ sessionId, latest, refreshKey, onDiagnostic
           )}
         </div>
       ) : (
-        <div className={styles.placeholder}>Click Build to run CMake configure + build for the active flavor.</div>
+        <div className={styles.placeholder}>{emptyPlaceholder ?? 'Click Build to run the build for the active flavor.'}</div>
       )}
 
       <div className={styles.historySection}>

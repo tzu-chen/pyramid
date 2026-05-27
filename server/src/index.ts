@@ -19,6 +19,9 @@ import backendsRouter from './routes/backends.js';
 import { leanLsp } from './services/lean-lsp.js';
 import { cppLsp } from './services/cpp-lsp.js';
 import { cppProject } from './services/cpp-project.js';
+import { ocamlLsp } from './services/ocaml-lsp.js';
+import { ocamlProject } from './services/ocaml-project.js';
+import { ocamlDap } from './services/ocaml-dap.js';
 import { notebookKernel } from './services/notebook-kernel.js';
 import { terminal } from './services/terminal.js';
 
@@ -96,6 +99,42 @@ server.on('upgrade', (request, socket, head) => {
     return;
   }
 
+  // Match /ws/ocaml/:sessionId
+  const ocamlMatch = pathname?.match(/^\/ws\/ocaml\/([a-f0-9-]+)$/);
+  if (ocamlMatch) {
+    const sessionId = ocamlMatch[1];
+    const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'freeform' || session.language !== 'ocaml') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = path.join(__dirname, '..', session.working_dir);
+      // Bootstrap .ocamlformat / .merlin for sessions created before this feature landed
+      ocamlProject.ensureDefaults(cwd);
+      ocamlLsp.handleWebSocket(ws, sessionId, cwd);
+    });
+    return;
+  }
+
+  // Match /ws/debug/:sessionId — OCaml debug (earlybird DAP)
+  const debugMatch = pathname?.match(/^\/ws\/debug\/([a-f0-9-]+)$/);
+  if (debugMatch) {
+    const sessionId = debugMatch[1];
+    const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'freeform' || session.language !== 'ocaml') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = path.join(__dirname, '..', session.working_dir);
+      ocamlDap.handleWebSocket(ws, sessionId, cwd);
+    });
+    return;
+  }
+
   // Match /ws/notebook/:sessionId
   const nbMatch = pathname?.match(/^\/ws\/notebook\/([a-f0-9-]+)$/);
   if (nbMatch) {
@@ -132,6 +171,8 @@ server.on('upgrade', (request, socket, head) => {
 function shutdown() {
   leanLsp.forceStopAll();
   cppLsp.forceStopAll();
+  ocamlLsp.forceStopAll();
+  ocamlDap.forceStopAll();
   notebookKernel.forceStopAll();
   terminal.forceStopAll();
   server.close(() => {

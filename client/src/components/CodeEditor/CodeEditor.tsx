@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState, useMemo, MutableRefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Extension, Compartment, Prec, StateField, StateEffect } from '@codemirror/state';
-import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip, Decoration, DecorationSet } from '@codemirror/view';
+import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip, Decoration, DecorationSet, gutter, GutterMarker } from '@codemirror/view';
 import { python, pythonLanguage, localCompletionSource, globalCompletion } from '@codemirror/lang-python';
 import { cpp, cppLanguage } from '@codemirror/lang-cpp';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
@@ -133,6 +133,103 @@ const leanStreamDef = {
 
 function leanLanguage(): LanguageSupport {
   return new LanguageSupport(StreamLanguage.define(leanStreamDef));
+}
+
+// --- OCaml Syntax Highlighting ---
+
+const ocamlKeywords = new Set([
+  'and', 'as', 'assert', 'asr', 'begin', 'class', 'constraint', 'do', 'done',
+  'downto', 'else', 'end', 'exception', 'external', 'false', 'for', 'fun',
+  'function', 'functor', 'if', 'in', 'include', 'inherit', 'initializer',
+  'land', 'lazy', 'let', 'lor', 'lsl', 'lsr', 'lxor', 'match', 'method',
+  'mod', 'module', 'mutable', 'new', 'nonrec', 'object', 'of', 'open', 'or',
+  'private', 'rec', 'sig', 'struct', 'then', 'to', 'true', 'try', 'type',
+  'val', 'virtual', 'when', 'while', 'with',
+]);
+
+const ocamlBuiltins = new Set([
+  'int', 'float', 'bool', 'char', 'string', 'unit', 'list', 'array', 'option',
+  'ref', 'bytes', 'exn', 'lazy_t', 'format', 'in_channel', 'out_channel',
+  'Some', 'None', 'Ok', 'Error', 'Result',
+]);
+
+interface OcamlState {
+  inBlockComment: number;
+  inString: boolean;
+}
+
+const ocamlStreamDef = {
+  startState(): OcamlState {
+    return { inBlockComment: 0, inString: false };
+  },
+  token(stream: StringStream, state: OcamlState): string | null {
+    // Block comment (OCaml: `(* ... *)`, nests)
+    if (state.inBlockComment > 0) {
+      if (stream.match('(*')) { state.inBlockComment++; return 'comment'; }
+      if (stream.match('*)')) { state.inBlockComment--; return 'comment'; }
+      stream.next();
+      return 'comment';
+    }
+
+    // String
+    if (state.inString) {
+      if (stream.match(/^[^"\\]+/)) return 'string';
+      if (stream.match(/^\\./)) return 'string';
+      if (stream.match('"')) { state.inString = false; return 'string'; }
+      stream.next();
+      return 'string';
+    }
+
+    // Start block comment
+    if (stream.match('(*')) {
+      state.inBlockComment = 1;
+      return 'comment';
+    }
+
+    // String start
+    if (stream.match('"')) {
+      state.inString = true;
+      return 'string';
+    }
+
+    // Char literal: 'x' or '\n' or '\123'
+    if (stream.match(/^'(?:\\(?:[\\'"ntrb ]|\d{3}|x[0-9a-fA-F]{2})|[^\\'])'/)) return 'string';
+
+    // Number (int, float, hex, oct, bin, with optional suffix)
+    if (stream.match(/^0[xX][0-9a-fA-F_]+(?:\.[0-9a-fA-F_]*)?(?:[pP][+-]?[0-9_]+)?[lLn]?/)) return 'number';
+    if (stream.match(/^0[oO][0-7_]+[lLn]?/)) return 'number';
+    if (stream.match(/^0[bB][01_]+[lLn]?/)) return 'number';
+    if (stream.match(/^[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?[lLn]?/)) return 'number';
+
+    // Polymorphic variant tag: `Foo
+    if (stream.match(/^`[A-Za-z_][\w']*/)) return 'typeName';
+
+    // Type variable: 'a, 'b, etc.
+    if (stream.match(/^'[a-z_][\w']*/)) return 'typeName';
+
+    // Operators (multi-char first)
+    if (stream.match(/^(?:->|<-|::|:=|&&|\|\||==|!=|<=|>=|<>|\|>|@@|\.\.|\.{3})/)) return 'operator';
+    if (stream.match(/^[+\-*/%=<>!&|^~?@$.:]/)) return 'operator';
+
+    // Identifiers and keywords
+    if (stream.match(/^[a-zA-Z_][\w']*/)) {
+      const word = stream.current();
+      if (ocamlKeywords.has(word)) return 'keyword';
+      if (ocamlBuiltins.has(word)) return 'typeName';
+      // Capitalised → constructor/module
+      if (word[0] >= 'A' && word[0] <= 'Z') return 'typeName';
+      return 'variableName';
+    }
+
+    stream.next();
+    return null;
+  },
+};
+
+const ocamlStreamLanguage = StreamLanguage.define(ocamlStreamDef);
+
+function ocamlLanguage(): LanguageSupport {
+  return new LanguageSupport(ocamlStreamLanguage);
 }
 
 // --- Unicode Input Extension ---
@@ -270,6 +367,141 @@ const highlightedLineTheme = EditorView.theme({
   },
 });
 
+// --- Debugger: breakpoint gutter ---
+//
+// The breakpoint set is owned by the page (SessionPage) — the gutter reflects
+// it via `setBreakpointMap` effects. Click events on the gutter notify outside
+// via a callback ref so the page can update its source-of-truth set and
+// round-trip it back here. 1-indexed line numbers throughout.
+//
+// Each entry's boolean value is "verified" (the debug adapter confirmed the
+// breakpoint can resolve to a real instruction). Unverified entries render as
+// a hollow ring; verified as solid. Before a debug session has run, every
+// entry is unverified.
+
+const setBreakpointMap = StateEffect.define<Map<number, boolean>>();
+
+class BreakpointGutterMarker extends GutterMarker {
+  constructor(private verified: boolean) { super(); }
+  // Markers are compared by .eq for diffing; without this CM re-creates DOM
+  // every render and tooltips/animations flicker.
+  override eq(other: GutterMarker): boolean {
+    return other instanceof BreakpointGutterMarker && other.verified === this.verified;
+  }
+  toDOM() {
+    const el = document.createElement('div');
+    el.className = this.verified ? 'cm-bp-dot cm-bp-verified' : 'cm-bp-dot cm-bp-unverified';
+    return el;
+  }
+}
+
+const verifiedMarker = new BreakpointGutterMarker(true);
+const unverifiedMarker = new BreakpointGutterMarker(false);
+
+const breakpointMapField = StateField.define<Map<number, boolean>>({
+  create() { return new Map(); },
+  update(value, tr) {
+    let next = value;
+    for (const e of tr.effects) {
+      if (e.is(setBreakpointMap)) {
+        next = e.value;
+      }
+    }
+    return next;
+  },
+});
+
+function makeBreakpointGutter(onToggleRef: { current: ((line: number) => void) | null }): Extension {
+  return gutter({
+    class: 'cm-bp-gutter',
+    lineMarker(view, line) {
+      const lineNo = view.state.doc.lineAt(line.from).number;
+      const bp = view.state.field(breakpointMapField).get(lineNo);
+      if (bp === undefined) return null;
+      return bp ? verifiedMarker : unverifiedMarker;
+    },
+    // Crucial: without this CodeMirror caches the marker layer and only
+    // re-renders when something forces a viewport rebuild (e.g. tab switch).
+    // Tell it explicitly that breakpoint-set changes should invalidate.
+    lineMarkerChange(update) {
+      return update.startState.field(breakpointMapField) !== update.state.field(breakpointMapField);
+    },
+    initialSpacer: () => verifiedMarker,
+    domEventHandlers: {
+      mousedown(view, line) {
+        const lineNo = view.state.doc.lineAt(line.from).number;
+        onToggleRef.current?.(lineNo);
+        return true;
+      },
+    },
+  });
+}
+
+const breakpointTheme = EditorView.theme({
+  '.cm-bp-gutter': {
+    width: '16px',
+    cursor: 'pointer',
+  },
+  '.cm-bp-gutter .cm-gutterElement': {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  '.cm-bp-dot': {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.15)',
+  },
+  '.cm-bp-verified': {
+    backgroundColor: '#e53935',
+  },
+  '.cm-bp-unverified': {
+    backgroundColor: 'transparent',
+    border: '2px solid #e53935',
+    boxSizing: 'border-box',
+  },
+});
+
+// --- Debugger: current execution line ---
+//
+// Distinct from the asm/source-sync highlight so the two can coexist when
+// debugging C++ in the future, and so the visual treatment can be more
+// emphatic (full-width yellow band with an arrow accent).
+
+const setDebugStoppedLine = StateEffect.define<number | null>();
+
+const debugStoppedLineMark = Decoration.line({ class: 'cm-debug-stopped-line' });
+
+const debugStoppedLineField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setDebugStoppedLine)) {
+        const line = e.value;
+        if (line == null) {
+          deco = Decoration.none;
+        } else {
+          const doc = tr.state.doc;
+          const ln = Math.max(1, Math.min(line, doc.lines));
+          const li = doc.line(ln);
+          deco = Decoration.set([debugStoppedLineMark.range(li.from)]);
+        }
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+const debugStoppedTheme = EditorView.theme({
+  '.cm-debug-stopped-line': {
+    backgroundColor: 'rgba(255, 193, 7, 0.35)',
+    boxShadow: 'inset 3px 0 0 #ffa000',
+  },
+});
+
 // --- LSP Diagnostics Extension ---
 
 export interface LspDiagnostic {
@@ -317,6 +549,15 @@ interface CodeEditorProps {
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
   hideSearchBar?: boolean;
+  // Debugger integration. All line numbers are 1-indexed.
+  showBreakpointGutter?: boolean;
+  // Map from breakpoint line → verified flag (adapter confirmed it resolves).
+  // Lines absent from the map render no marker. Unverified lines render as a
+  // hollow ring; verified as a solid dot.
+  breakpoints?: Map<number, boolean>;
+  onBreakpointToggle?: (line: number) => void;
+  // The line currently paused at by the debugger. null to clear the marker.
+  debugStoppedLine?: number | null;
 }
 
 function pythonWithCompletion(): Extension {
@@ -332,6 +573,7 @@ function getLanguageExtension(language: string): Extension {
     case 'python': return pythonWithCompletion();
     case 'cpp': return cpp();
     case 'julia': return pythonWithCompletion(); // Close enough syntax for basic highlighting
+    case 'ocaml': return ocamlLanguage();
     case 'lean': return leanLanguage();
     default: return pythonWithCompletion();
   }
@@ -352,7 +594,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false, showBreakpointGutter = false, breakpoints, onBreakpointToggle, debugStoppedLine }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -375,6 +617,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   externalCompletionRef.current = externalCompletion;
   const externalHoverRef = useRef(externalHover);
   externalHoverRef.current = externalHover;
+  const onBreakpointToggleRef = useRef<((line: number) => void) | null>(null);
+  onBreakpointToggleRef.current = onBreakpointToggle ?? null;
 
   const createEditor = useCallback(() => {
     if (!containerRef.current) return;
@@ -407,6 +651,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       searchTheme,
       highlightedLineField,
       highlightedLineTheme,
+      debugStoppedLineField,
+      debugStoppedTheme,
       getLanguageExtension(language),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -427,18 +673,26 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       extensions.push(unicodeInputExtension());
     }
 
-    if (language === 'python' || language === 'julia' || language === 'cpp') {
+    if (showBreakpointGutter) {
+      extensions.push(breakpointMapField);
+      extensions.push(breakpointTheme);
+      extensions.push(makeBreakpointGutter(onBreakpointToggleRef));
+    }
+
+    if (language === 'python' || language === 'julia' || language === 'cpp' || language === 'ocaml') {
       const externalSource = async (ctx: CompletionContext): Promise<CMCompletionResult | null> => {
         const fn = externalCompletionRef.current;
         if (!fn) return null;
         // Trigger on word char, '.', or explicit invocation. C++ also triggers on '>' (->) and ':' (::).
+        // OCaml also triggers on '#' (object method) — but '.' covers module access (List.map).
         const before = ctx.state.sliceDoc(Math.max(0, ctx.pos - 1), ctx.pos);
         const before2 = ctx.state.sliceDoc(Math.max(0, ctx.pos - 2), ctx.pos);
         const isWord = /\w/.test(before);
         const isDot = before === '.';
+        const isHash = before === '#';
         const isArrow = before2 === '->';
         const isScope = before2 === '::';
-        if (!ctx.explicit && !isWord && !isDot && !isArrow && !isScope) return null;
+        if (!ctx.explicit && !isWord && !isDot && !isHash && !isArrow && !isScope) return null;
         const code = ctx.state.doc.toString();
         const result = await fn(code, ctx.pos);
         if (!result || result.matches.length === 0) return null;
@@ -453,7 +707,9 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
           validFor: /^[\w.]*$/,
         };
       };
-      const langData = language === 'cpp' ? cppLanguage.data : pythonLanguage.data;
+      const langData = language === 'cpp' ? cppLanguage.data
+        : language === 'ocaml' ? ocamlStreamLanguage.data
+        : pythonLanguage.data;
       extensions.push(langData.of({ autocomplete: externalSource }));
     }
 
@@ -509,7 +765,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       state,
       parent: containerRef.current,
     });
-  }, [language, scheme, readOnly]);
+  }, [language, scheme, readOnly, showBreakpointGutter]);
 
   useEffect(() => {
     createEditor();
@@ -665,6 +921,27 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       }
     }
   }, [value]);
+
+  // Push breakpoint set changes into the gutter state field.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !showBreakpointGutter) return;
+    view.dispatch({ effects: setBreakpointMap.of(breakpoints ?? new Map()) });
+  }, [breakpoints, showBreakpointGutter]);
+
+  // Push debug-stopped-at-line changes into its dedicated decoration field.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setDebugStoppedLine.of(debugStoppedLine ?? null) });
+    if (debugStoppedLine != null) {
+      // Scroll the stop into view so it's not hidden offscreen.
+      const doc = view.state.doc;
+      const ln = Math.max(1, Math.min(debugStoppedLine, doc.lines));
+      const li = doc.line(ln);
+      view.dispatch({ effects: EditorView.scrollIntoView(li.from, { y: 'center' }) });
+    }
+  }, [debugStoppedLine]);
 
   // Recompute matches whenever the query or document text changes
   useEffect(() => {

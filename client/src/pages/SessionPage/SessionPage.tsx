@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { useCppLsp, type CppDocumentSymbol } from '../../hooks/useCppLsp';
+import { useOcamlLsp, type OcamlDocumentSymbol } from '../../hooks/useOcamlLsp';
+import { useDapSession, type DapStackFrame } from '../../hooks/useDapSession';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
@@ -25,6 +27,8 @@ import BuildPanel from '../../components/BuildPanel/BuildPanel';
 import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
 import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
+import DebugPanel from '../../components/DebugPanel/DebugPanel';
+import { api } from '../../services/api';
 import type { EditorSelection } from '../../components/CodeEditor/CodeEditor';
 import {
   cppBuildService,
@@ -34,21 +38,33 @@ import {
   type BuildResponse,
   type CompilerDiagnostic,
 } from '../../services/cppBuildService';
+import {
+  duneBuildService,
+  DUNE_PROFILE_PRESETS,
+  duneFlavorFromId,
+  type DuneProfile,
+} from '../../services/duneBuildService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'debug' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
 const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
+const DUNE_PROFILE_KEY = 'pyramid_dune_profile';
+const DUNE_TARGET_KEY = 'pyramid_dune_target';
 
 // Files clangd should syntax-check. Anything else (CMakeLists.txt, *.txt,
 // *.md, ...) must not be opened in clangd or surface clangd diagnostics, even
 // if it lives in a C++ session.
 const CPP_SOURCE_EXTS = new Set(['cpp', 'cc', 'cxx', 'c', 'h', 'hpp', 'hh', 'hxx', 'ipp', 'tpp', 'inl']);
+
+// Files ocamllsp should syntax-check. Anything else (dune, dune-project, *.txt,
+// *.md, ...) must not be opened in ocamllsp.
+const OCAML_SOURCE_EXTS = new Set(['ml', 'mli']);
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -124,6 +140,11 @@ function SessionPage() {
   const cppProjectPath = isFreeformCpp ? (session?.absolute_working_dir ?? null) : null;
   const cppLsp = useCppLsp(id, isFreeformCpp && !suspended, cppProjectPath);
 
+  // OCaml LSP hook (ocamllsp) — only enabled for freeform OCaml sessions
+  const isFreeformOcaml = isFreeform && session?.language === 'ocaml';
+  const ocamlProjectPath = isFreeformOcaml ? (session?.absolute_working_dir ?? null) : null;
+  const ocamlLsp = useOcamlLsp(id, isFreeformOcaml && !suspended, ocamlProjectPath);
+
   // CMake-specific state (only relevant for freeform C++ sessions whose dir
   // contains a CMakeLists.txt — populated lazily after session load).
   const [isCmakeProject, setIsCmakeProject] = useState(false);
@@ -138,6 +159,29 @@ function SessionPage() {
   const [cmakeLastBuild, setCmakeLastBuild] = useState<BuildResponse | null>(null);
   const [cmakeBuildError, setCmakeBuildError] = useState<string | null>(null);
   const [cmakeHistoryRefresh, setCmakeHistoryRefresh] = useState(0);
+
+  // Dune-specific state (only relevant for freeform OCaml sessions whose dir
+  // contains a dune-project — populated lazily after session load).
+  const [isDuneProject, setIsDuneProject] = useState(false);
+  const [duneProfileId, setDuneProfileId] = useState<DuneProfile>(() => {
+    return (localStorage.getItem(DUNE_PROFILE_KEY) as DuneProfile) || 'dev';
+  });
+  const [duneTarget, setDuneTarget] = useState<string>(() => {
+    return localStorage.getItem(DUNE_TARGET_KEY) || '';
+  });
+  const [duneTargets, setDuneTargets] = useState<string[]>([]);
+  const [duneBuilding, setDuneBuilding] = useState(false);
+  const [duneLastBuild, setDuneLastBuild] = useState<BuildResponse | null>(null);
+  const [duneBuildError, setDuneBuildError] = useState<string | null>(null);
+  const [duneHistoryRefresh, setDuneHistoryRefresh] = useState(0);
+
+  // Debugger state. Only meaningful when isFreeformOcaml && isDuneProject.
+  // Breakpoints are session-scoped, in-memory (file path → 1-indexed lines).
+  const [breakpoints, setBreakpoints] = useState<Map<string, number[]>>(new Map());
+  const [debugTargets, setDebugTargets] = useState<string[]>([]);
+  const [selectedDebugTarget, setSelectedDebugTarget] = useState<string>('');
+  // Absolute path of each .bc target, keyed by name — needed for the launch arg.
+  const [debugTargetPaths, setDebugTargetPaths] = useState<Map<string, string>>(new Map());
   const onJumpRef = useRef<((line: number, column: number) => void) | null>(null);
   const pendingJumpRef = useRef<{ line: number; column: number } | null>(null);
   const getSelectionRef = useRef<(() => EditorSelection) | null>(null);
@@ -155,6 +199,9 @@ function SessionPage() {
   // C++ outline symbols (refreshed on file change + debounced edits)
   const [cppSymbols, setCppSymbols] = useState<CppDocumentSymbol[]>([]);
   const [cppSymbolsLoading, setCppSymbolsLoading] = useState(false);
+  // OCaml outline symbols (same shape, separate state to keep tabs simple)
+  const [ocamlSymbols, setOcamlSymbols] = useState<OcamlDocumentSymbol[]>([]);
+  const [ocamlSymbolsLoading, setOcamlSymbolsLoading] = useState(false);
   const debouncedFileContent = useDebounce(fileContent, 800);
 
   const debouncedNotes = useDebounce(notes, 1500);
@@ -258,7 +305,7 @@ function SessionPage() {
     lspOpenedFileRef.current = null;
     fileUriRef.current = null;
     setEditorCursorLine(null);
-  }, [activeFileId, lsp.initialized, cppLsp.initialized]);
+  }, [activeFileId, lsp.initialized, cppLsp.initialized, ocamlLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
   useEffect(() => {
@@ -319,6 +366,47 @@ function SessionPage() {
     return () => { cancelled = true; };
   }, [isFreeformCpp, cppLsp, activeFileId, debouncedFileContent]);
 
+  // OCaml didOpen flow — only *.ml / *.mli files go to ocamllsp.
+  useEffect(() => {
+    if (!isFreeformOcaml || !ocamlLsp.initialized || !session?.files || !activeFileId) return;
+    const file = session.files.find(f => f.id === activeFileId);
+    if (!file) return;
+    const ext = file.filename.split('.').pop()?.toLowerCase() ?? '';
+    if (!OCAML_SOURCE_EXTS.has(ext)) {
+      fileUriRef.current = null;
+      lspOpenedFileRef.current = null;
+      return;
+    }
+    const uri = getFileUri(file.filename);
+    fileUriRef.current = uri;
+    if (lspOpenedFileRef.current !== uri) {
+      ocamlLsp.sendDidOpen(uri, fileContent);
+      lspOpenedFileRef.current = uri;
+    }
+  }, [isFreeformOcaml, ocamlLsp.initialized, fileContent, activeFileId, session?.files, getFileUri, ocamlLsp.sendDidOpen]);
+
+  // OCaml outline: same pattern as C++.
+  useEffect(() => {
+    if (!isFreeformOcaml || !ocamlLsp.initialized || !fileUriRef.current) {
+      setOcamlSymbols([]);
+      return;
+    }
+    let cancelled = false;
+    setOcamlSymbolsLoading(true);
+    ocamlLsp
+      .requestDocumentSymbols(fileUriRef.current)
+      .then((syms) => {
+        if (!cancelled) setOcamlSymbols(syms);
+      })
+      .catch(() => {
+        if (!cancelled) setOcamlSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled) setOcamlSymbolsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isFreeformOcaml, ocamlLsp, activeFileId, debouncedFileContent]);
+
   // Auto-save notes
   useEffect(() => {
     if (id && debouncedNotes !== prevNotesRef.current && notesEditing) {
@@ -347,6 +435,8 @@ function SessionPage() {
   lspRef.current = lsp;
   const cppLspRef = useRef(cppLsp);
   cppLspRef.current = cppLsp;
+  const ocamlLspRef = useRef(ocamlLsp);
+  ocamlLspRef.current = ocamlLsp;
 
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
@@ -358,9 +448,11 @@ function SessionPage() {
         lspRef.current.sendDidChange(fileUriRef.current, content);
       } else if (isFreeformCpp && fileUriRef.current) {
         cppLspRef.current.sendDidChange(fileUriRef.current, content);
+      } else if (isFreeformOcaml && fileUriRef.current) {
+        ocamlLspRef.current.sendDidChange(fileUriRef.current, content);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml]);
 
   const handleCursorChange = useCallback((position: { line: number; character: number }) => {
     if (isLean && fileUriRef.current) {
@@ -433,11 +525,232 @@ function SessionPage() {
     }
   }, [id, cmakeBuilding, cmakeFlavorId, cmakeTarget, applyBuildResponse]);
 
+  // ─── Dune (OCaml) build pipeline ──────────────────────────────────────────
+
+  useEffect(() => {
+    if (!id || !isFreeformOcaml) {
+      setIsDuneProject(false);
+      setDuneTargets([]);
+      return;
+    }
+    duneBuildService.status(id)
+      .then((s) => setIsDuneProject(s.is_dune_project))
+      .catch(() => setIsDuneProject(false));
+  }, [id, isFreeformOcaml, session?.files]);
+
+  useEffect(() => { localStorage.setItem(DUNE_PROFILE_KEY, duneProfileId); }, [duneProfileId]);
+  useEffect(() => {
+    if (duneTarget) localStorage.setItem(DUNE_TARGET_KEY, duneTarget);
+    else localStorage.removeItem(DUNE_TARGET_KEY);
+  }, [duneTarget]);
+
+  const refreshDuneTargets = useCallback(async (profile: DuneProfile) => {
+    if (!id || !isDuneProject) return;
+    try {
+      const { binaries } = await duneBuildService.binaries(id, { profile });
+      setDuneTargets(binaries.map(b => b.name));
+    } catch {
+      setDuneTargets([]);
+    }
+  }, [id, isDuneProject]);
+
+  useEffect(() => {
+    if (isDuneProject) refreshDuneTargets(duneProfileId);
+  }, [isDuneProject, duneProfileId, refreshDuneTargets]);
+
+  const applyDuneBuildResponse = useCallback((resp: BuildResponse) => {
+    setDuneLastBuild(resp);
+    setDuneHistoryRefresh(n => n + 1);
+    refreshDuneTargets(duneProfileId);
+    if (!duneTarget && resp.binary_paths.length === 1) {
+      const name = (resp.binary_paths[0].split('/').pop() || '').replace(/\.exe$/, '');
+      if (name) setDuneTarget(name);
+    }
+  }, [duneTarget, duneProfileId, refreshDuneTargets]);
+
+  const handleDuneBuild = useCallback(async () => {
+    if (!id || duneBuilding) return;
+    setDuneBuilding(true);
+    setDuneBuildError(null);
+    setActiveTab('build');
+    try {
+      const flavor = duneFlavorFromId(duneProfileId);
+      const resp = await duneBuildService.build(id, flavor, duneTarget ? { target: duneTarget } : undefined);
+      applyDuneBuildResponse(resp);
+    } catch (err) {
+      setDuneBuildError((err as Error).message);
+    } finally {
+      setDuneBuilding(false);
+    }
+  }, [id, duneBuilding, duneProfileId, duneTarget, applyDuneBuildResponse]);
+
+  // ─── Debugger (earlybird DAP) ─────────────────────────────────────────────
+
+  const debugEnabled = !!isFreeformOcaml && isDuneProject && !suspended;
+  const [debugStoppedLocation, setDebugStoppedLocation] = useState<{ file: string; line: number } | null>(null);
+
+  const dap = useDapSession({
+    sessionId: id,
+    enabled: debugEnabled,
+    breakpoints,
+    onStopped: (info) => {
+      if (info.location?.file && typeof info.location.line === 'number') {
+        setDebugStoppedLocation({ file: info.location.file, line: info.location.line });
+      }
+    },
+    onTerminated: () => {
+      setDebugStoppedLocation(null);
+    },
+  });
+
+  // Refresh available bytecode targets whenever the dune profile changes or a
+  // build completes — both are signals that .bc files may have appeared.
+  useEffect(() => {
+    if (!id || !debugEnabled || !isDuneProject) {
+      setDebugTargets([]);
+      setDebugTargetPaths(new Map());
+      return;
+    }
+    let cancelled = false;
+    api.get<{ profile: string; binaries: Array<{ name: string; path: string }> }>(
+      `/sessions/${id}/debug/binaries?profile=${duneProfileId}`
+    ).then((resp) => {
+      if (cancelled) return;
+      const names = resp.binaries.map((b) => b.name);
+      setDebugTargets(names);
+      setDebugTargetPaths(new Map(resp.binaries.map((b) => [b.name, b.path] as const)));
+      // Auto-pick: prefer current dune run target if it has a .bc, else first.
+      if (!selectedDebugTarget || !names.includes(selectedDebugTarget)) {
+        const pick = (duneTarget && names.includes(duneTarget)) ? duneTarget : (names[0] ?? '');
+        setSelectedDebugTarget(pick);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setDebugTargets([]);
+        setDebugTargetPaths(new Map());
+      }
+    });
+    return () => { cancelled = true; };
+  }, [id, debugEnabled, isDuneProject, duneProfileId, duneHistoryRefresh, duneTarget, selectedDebugTarget]);
+
+  const handleDebugStart = useCallback(async (stopOnEntry: boolean) => {
+    if (!selectedDebugTarget) return;
+    const program = debugTargetPaths.get(selectedDebugTarget);
+    if (!program) return;
+    setActiveTab('debug');
+    setDebugStoppedLocation(null);
+    await dap.launch(program, [], session?.absolute_working_dir ?? undefined, stopOnEntry);
+  }, [dap, selectedDebugTarget, debugTargetPaths, session?.absolute_working_dir]);
+
+  // Toggle a breakpoint on the currently active file. Lines are 1-indexed.
+  const handleBreakpointToggle = useCallback((line: number) => {
+    if (!session || !activeFileId) return;
+    const file = session.files.find((f) => f.id === activeFileId);
+    if (!file) return;
+    const absPath = session.absolute_working_dir
+      ? `${session.absolute_working_dir}/${file.filename}`
+      : file.filename;
+    setBreakpoints((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(absPath) ?? [];
+      const has = existing.includes(line);
+      const updated = has ? existing.filter((l) => l !== line) : [...existing, line].sort((a, b) => a - b);
+      if (updated.length === 0) next.delete(absPath);
+      else next.set(absPath, updated);
+      return next;
+    });
+  }, [session, activeFileId]);
+
+  // Click a stack frame → switch to its file (if present in the session) and
+  // jump to the line. Best-effort: matches by basename if absolute paths differ.
+  const handleDebugFrameClick = useCallback((frame: DapStackFrame) => {
+    if (!session?.files || !frame.source) return;
+    const wantedPath = frame.source.path ?? '';
+    const wantedName = frame.source.name ?? wantedPath.split('/').pop() ?? '';
+    const target = session.files.find((f) => {
+      const abs = session.absolute_working_dir ? `${session.absolute_working_dir}/${f.filename}` : f.filename;
+      return abs === wantedPath || f.filename === wantedName || f.filename.endsWith('/' + wantedName);
+    });
+    if (!target) return;
+    if (target.id !== activeFileId) {
+      pendingJumpRef.current = { line: frame.line, column: frame.column };
+      openFile(target.id);
+    } else {
+      onJumpRef.current?.(frame.line, frame.column);
+    }
+  }, [session, activeFileId, openFile]);
+
+  // Breakpoints (1-indexed lines) for the active file, looked up by its
+  // absolute path. Active for both display in the gutter and for stop-line
+  // matching below.
+  const activeFileAbsPath = useMemo(() => {
+    if (!session || !activeFileId) return null;
+    const file = session.files.find((f) => f.id === activeFileId);
+    if (!file) return null;
+    return session.absolute_working_dir
+      ? `${session.absolute_working_dir}/${file.filename}`
+      : file.filename;
+  }, [session, activeFileId]);
+
+  // Combine the user's breakpoint set with the adapter's verification status.
+  // Before the debugger runs, every breakpoint is unverified (hollow ring).
+  // After setBreakpoints round-trips during a debug session, the ones earlybird
+  // could resolve switch to solid.
+  const activeFileBreakpoints = useMemo(() => {
+    if (!activeFileAbsPath) return undefined;
+    const lines = breakpoints.get(activeFileAbsPath);
+    if (!lines || lines.length === 0) return undefined;
+    const verifiedForFile = dap.verifiedBreakpoints.get(activeFileAbsPath);
+    const out = new Map<number, boolean>();
+    for (const line of lines) {
+      out.set(line, verifiedForFile?.get(line) ?? false);
+    }
+    return out;
+  }, [activeFileAbsPath, breakpoints, dap.verifiedBreakpoints]);
+
+  // Stopped-line decoration is only shown when the debugger is paused IN the
+  // currently open file. Otherwise it's null so the marker clears.
+  const activeFileStoppedLine = useMemo(() => {
+    if (!debugStoppedLocation || !activeFileAbsPath) return null;
+    return debugStoppedLocation.file === activeFileAbsPath ? debugStoppedLocation.line : null;
+  }, [debugStoppedLocation, activeFileAbsPath]);
+
   const handleExecute = async () => {
     if (!id || executing) return;
     setExecuting(true);
     try {
-      if (isCmakeProject) {
+      if (isDuneProject) {
+        const flavor = duneFlavorFromId(duneProfileId);
+        const result = await executionService.execute(id, {
+          file_id: activeFileId ?? undefined,
+          flavor,
+          target: duneTarget || undefined,
+        });
+        if (result.kind === 'ran') {
+          applyDuneBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: true,
+            duration_ms: result.build_duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.build_log,
+            binary_paths: [result.binary_path],
+          });
+          setRuns(prev => [result.run, ...prev]);
+          setActiveTab('output');
+        } else if (result.kind === 'build_failed' || result.kind === 'no_binary') {
+          applyDuneBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: false,
+            duration_ms: result.duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.log,
+            binary_paths: [],
+          });
+          setActiveTab('build');
+        }
+      } else if (isCmakeProject) {
         const flavor = flavorFromId(cmakeFlavorId);
         const result = await executionService.execute(id, {
           file_id: activeFileId ?? undefined,
@@ -533,9 +846,11 @@ function SessionPage() {
         lspRef.current.sendDidChange(fileUriRef.current, code);
       } else if (isFreeformCpp && fileUriRef.current) {
         cppLspRef.current.sendDidChange(fileUriRef.current, code);
+      } else if (isFreeformOcaml && fileUriRef.current) {
+        ocamlLspRef.current.sendDidChange(fileUriRef.current, code);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp, isNotebook]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isNotebook]);
 
   const updateLinks = async (newLinks: SessionLink[]) => {
     if (!id || !session) return;
@@ -633,6 +948,42 @@ function SessionPage() {
     return await cppLspRef.current.requestHover(fileUriRef.current, line, character);
   }, [isFreeformCpp]);
 
+  // OCaml LSP: completion + hover sources for the editor
+  const ocamlExternalCompletion = useCallback(async (code: string, cursorPos: number) => {
+    if (!isFreeformOcaml || !fileUriRef.current) return null;
+    let line = 0;
+    let lineStart = 0;
+    for (let i = 0; i < cursorPos; i++) {
+      if (code.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+    }
+    const character = cursorPos - lineStart;
+    const items = await ocamlLspRef.current.requestCompletion(fileUriRef.current, line, character);
+    if (!items || items.length === 0) return null;
+    // Replacement range: word characters + apostrophes (OCaml identifiers can
+    // contain ') before cursor.
+    let from = cursorPos;
+    while (from > 0) {
+      const c = code.charCodeAt(from - 1);
+      const isWord = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 39;
+      if (!isWord) break;
+      from--;
+    }
+    return {
+      from,
+      to: cursorPos,
+      matches: items.slice(0, 100).map((it) => ({
+        label: it.insertText || it.label,
+        type: 'variable',
+        detail: it.detail,
+      })),
+    };
+  }, [isFreeformOcaml]);
+
+  const ocamlExternalHover = useCallback(async (line: number, character: number) => {
+    if (!isFreeformOcaml || !fileUriRef.current) return null;
+    return await ocamlLspRef.current.requestHover(fileUriRef.current, line, character);
+  }, [isFreeformOcaml]);
+
   if (loading) return <div className={styles.loading}>Loading...</div>;
   if (error) return <div className={styles.error}>Error: {error}</div>;
   if (!session) return <div className={styles.error}>Session not found</div>;
@@ -644,6 +995,8 @@ function SessionPage() {
   // clangd integration (diagnostics, completion, hover, outline) only applies
   // to actual C/C++ source files within a freeform C++ session.
   const activeFileIsCpp = isFreeformCpp && CPP_SOURCE_EXTS.has(activeFileExt);
+  // Same gating for ocamllsp + *.ml/*.mli.
+  const activeFileIsOcaml = isFreeformOcaml && OCAML_SOURCE_EXTS.has(activeFileExt);
 
   // Lake status badge variant
   const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
@@ -663,6 +1016,9 @@ function SessionPage() {
           )}
           {isCmakeProject && (
             <Badge label={`cmake: ${cmakeFlavorId}`} variant="default" />
+          )}
+          {isDuneProject && (
+            <Badge label={`dune: ${duneProfileId}`} variant="default" />
           )}
         </div>
         <div className={styles.toolbarRight}>
@@ -730,10 +1086,55 @@ function SessionPage() {
                   </button>
                 </>
               )}
+              {isDuneProject && (
+                <>
+                  <select
+                    className={styles.flavorSelect}
+                    value={duneProfileId}
+                    onChange={e => setDuneProfileId(e.target.value as DuneProfile)}
+                    title="Dune profile"
+                  >
+                    {DUNE_PROFILE_PRESETS.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className={styles.flavorSelect}
+                    value={duneTarget}
+                    onChange={e => setDuneTarget(e.target.value)}
+                    title="Run target"
+                  >
+                    <option value="">(auto)</option>
+                    {duneTargets.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleDuneBuild}
+                    disabled={duneBuilding}
+                  >
+                    {duneBuilding ? 'Building...' : 'Build'}
+                  </button>
+                  <button
+                    className={styles.buildButton}
+                    onClick={() => {
+                      setActiveTab('debug');
+                      // Don't auto-launch — the panel's Start button handles
+                      // that so the user can pick a target first.
+                    }}
+                    disabled={dap.state === 'connecting' || dap.state === 'initializing'}
+                    title={debugTargets.length === 0 ? 'No .bc targets — add (modes byte exe) to your executable' : 'Open debug panel'}
+                  >
+                    {dap.state === 'stopped' ? 'Debug (stopped)' :
+                      dap.state === 'running' ? 'Debug (running)' : 'Debug'}
+                  </button>
+                </>
+              )}
               <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
-                {executing ? (isCmakeProject ? 'Building/Running...' : 'Running...') : 'Run'}
+                {executing ? ((isCmakeProject || isDuneProject) ? 'Building/Running...' : 'Running...') : 'Run'}
               </button>
-              {((cmakeLastBuild && !cmakeLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
+              {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
                 <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
               )}
             </>
@@ -856,15 +1257,31 @@ function SessionPage() {
                     value={fileContent}
                     language={session.language}
                     onChange={handleSaveFile}
-                    onCursorChange={activeFileIsCpp ? handleCursorChange : undefined}
-                    diagnostics={activeFileIsCpp ? cppLsp.diagnostics : undefined}
-                    externalCompletion={activeFileIsCpp ? cppExternalCompletion : undefined}
-                    externalHover={activeFileIsCpp ? cppExternalHover : undefined}
+                    onCursorChange={activeFileIsCpp || activeFileIsOcaml ? handleCursorChange : undefined}
+                    diagnostics={
+                      activeFileIsCpp ? cppLsp.diagnostics
+                      : activeFileIsOcaml ? ocamlLsp.diagnostics
+                      : undefined
+                    }
+                    externalCompletion={
+                      activeFileIsCpp ? cppExternalCompletion
+                      : activeFileIsOcaml ? ocamlExternalCompletion
+                      : undefined
+                    }
+                    externalHover={
+                      activeFileIsCpp ? cppExternalHover
+                      : activeFileIsOcaml ? ocamlExternalHover
+                      : undefined
+                    }
                     fontSize={fontSize}
                     onInsertRef={insertRef}
                     onJumpRef={onJumpRef}
                     onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
                     setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}
+                    showBreakpointGutter={activeFileIsOcaml && isDuneProject}
+                    breakpoints={activeFileBreakpoints}
+                    onBreakpointToggle={handleBreakpointToggle}
+                    debugStoppedLine={activeFileStoppedLine}
                   />
                 </div>
               </div>
@@ -930,18 +1347,18 @@ function SessionPage() {
                     Output
                   </button>
                 )}
-                {isCmakeProject && (
+                {(isCmakeProject || isDuneProject) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'build' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('build')}
                   >
                     Build
-                    {cmakeLastBuild && !cmakeLastBuild.success && (
+                    {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success)) && (
                       <span className={styles.tabBadge}>!</span>
                     )}
                   </button>
                 )}
-                {isCmakeProject && (
+                {(isCmakeProject || isDuneProject) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'artifacts' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('artifacts')}
@@ -949,7 +1366,7 @@ function SessionPage() {
                     Artifacts
                   </button>
                 )}
-                {isFreeformCpp && (
+                {(isFreeformCpp || isFreeformOcaml) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'outline' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('outline')}
@@ -963,6 +1380,15 @@ function SessionPage() {
                     onClick={() => setActiveTab('asm')}
                   >
                     Asm
+                  </button>
+                )}
+                {isFreeformOcaml && isDuneProject && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'debug' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('debug')}
+                  >
+                    Debug
+                    {dap.state === 'stopped' && <span className={styles.tabBadge}>!</span>}
                   </button>
                 )}
                 {isNotebook && (
@@ -1137,6 +1563,16 @@ function SessionPage() {
               />
             )}
 
+            {/* OCaml: Outline (ocamllsp documentSymbol) */}
+            {activeTab === 'outline' && isFreeformOcaml && (
+              <OutlinePanel
+                symbols={ocamlSymbols}
+                loading={ocamlSymbolsLoading}
+                initialized={ocamlLsp.initialized}
+                onSelect={handleOutlineSelect}
+              />
+            )}
+
             {/* Notebook: Variable Inspector */}
             {isNotebook && (
               <div style={{ display: activeTab === 'variables' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
@@ -1169,6 +1605,8 @@ function SessionPage() {
                   sessionId={id!}
                   latest={cmakeLastBuild}
                   refreshKey={cmakeHistoryRefresh}
+                  fetchHistory={cppBuildService.history}
+                  emptyPlaceholder="Click Build to run CMake configure + build for the active flavor."
                   onDiagnosticClick={handleDiagnosticClick}
                 />
               </div>
@@ -1176,7 +1614,58 @@ function SessionPage() {
 
             {/* CMake: Artifact browser */}
             {activeTab === 'artifacts' && isCmakeProject && (
-              <ArtifactBrowser sessionId={id!} refreshKey={cmakeHistoryRefresh} />
+              <ArtifactBrowser sessionId={id!} refreshKey={cmakeHistoryRefresh} service={cppBuildService} />
+            )}
+
+            {/* Dune: Build panel */}
+            {activeTab === 'build' && isDuneProject && (
+              <div className={styles.buildTabPane}>
+                {duneBuildError && (
+                  <div className={styles.buildError}>{duneBuildError}</div>
+                )}
+                <BuildPanel
+                  sessionId={id!}
+                  latest={duneLastBuild}
+                  refreshKey={duneHistoryRefresh}
+                  fetchHistory={duneBuildService.history}
+                  emptyPlaceholder="Click Build to run dune build for the active profile."
+                  onDiagnosticClick={handleDiagnosticClick}
+                />
+              </div>
+            )}
+
+            {/* Dune: Artifact browser */}
+            {activeTab === 'artifacts' && isDuneProject && (
+              <ArtifactBrowser
+                sessionId={id!}
+                refreshKey={duneHistoryRefresh}
+                service={duneBuildService}
+                rootLabel="_build/"
+              />
+            )}
+
+            {/* OCaml: Debugger panel (earlybird DAP) */}
+            {activeTab === 'debug' && isFreeformOcaml && isDuneProject && (
+              <DebugPanel
+                state={dap.state}
+                error={dap.error}
+                output={dap.output}
+                frames={dap.frames}
+                activeFrameId={dap.activeFrameId}
+                scopes={dap.scopes}
+                variables={dap.variables}
+                targets={debugTargets}
+                selectedTarget={selectedDebugTarget}
+                onTargetChange={setSelectedDebugTarget}
+                onStart={handleDebugStart}
+                onContinue={dap.continue}
+                onStepOver={dap.next}
+                onStepIn={dap.stepIn}
+                onStepOut={dap.stepOut}
+                onPause={dap.pause}
+                onStop={dap.disconnect}
+                onFrameClick={handleDebugFrameClick}
+              />
             )}
 
             {/* Non-lean: Output */}

@@ -1,9 +1,20 @@
 import { useState, useMemo } from 'react';
-import type { CppDocumentSymbol } from '../../hooks/useCppLsp';
 import styles from './OutlinePanel.module.css';
 
+// Structural shape shared by clangd and ocamllsp DocumentSymbol responses.
+// Both LSP servers return this shape when hierarchicalDocumentSymbolSupport
+// is advertised, so we don't depend on either hook's re-exported type.
+export interface OutlineSymbol {
+  name: string;
+  detail?: string;
+  kind: number;
+  range: { start: { line: number; character: number }; end: { line: number; character: number } };
+  selectionRange: { start: { line: number; character: number }; end: { line: number; character: number } };
+  children?: OutlineSymbol[];
+}
+
 interface OutlinePanelProps {
-  symbols: CppDocumentSymbol[];
+  symbols: OutlineSymbol[];
   loading: boolean;
   initialized: boolean;
   onSelect: (line: number, character: number) => void;
@@ -42,14 +53,14 @@ const KIND_INFO: Record<number, { label: string; cls: string }> = {
 };
 
 interface FlatNode {
-  symbol: CppDocumentSymbol;
+  symbol: OutlineSymbol;
   depth: number;
   path: string;
   hasChildren: boolean;
 }
 
 function flatten(
-  symbols: CppDocumentSymbol[],
+  symbols: OutlineSymbol[],
   depth: number,
   parentPath: string,
   collapsed: Set<string>,
@@ -84,7 +95,7 @@ function OutlinePanel({ symbols, loading, initialized, onSelect }: OutlinePanelP
   };
 
   if (!initialized) {
-    return <div className={styles.placeholder}>Connecting to clangd...</div>;
+    return <div className={styles.placeholder}>Connecting to language server...</div>;
   }
 
   if (symbols.length === 0) {
