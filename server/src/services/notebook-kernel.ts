@@ -8,10 +8,20 @@ const BRIDGE_SCRIPT = path.join(__dirname, 'jupyter-bridge.py');
 interface KernelProcess {
   process: ChildProcess;
   cwd: string;
+  startedAt: number;
   lastActivity: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   clients: Set<WebSocket>;
   stdoutBuffer: string;
+  ready: boolean;
+}
+
+export interface RunningKernelInfo {
+  session_id: string;
+  pid: number | null;
+  started_at: number;
+  last_activity: number;
+  client_count: number;
   ready: boolean;
 }
 
@@ -60,10 +70,12 @@ export const notebookKernel = {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    const now = Date.now();
     const kp: KernelProcess = {
       process: proc,
       cwd,
-      lastActivity: Date.now(),
+      startedAt: now,
+      lastActivity: now,
       idleTimer: null,
       clients: new Set(),
       stdoutBuffer: '',
@@ -142,6 +154,17 @@ export const notebookKernel = {
 
   isRunning(sessionId: string): boolean {
     return processes.has(sessionId);
+  },
+
+  listRunning(): RunningKernelInfo[] {
+    return Array.from(processes.entries()).map(([sessionId, kp]) => ({
+      session_id: sessionId,
+      pid: kp.process.pid ?? null,
+      started_at: kp.startedAt,
+      last_activity: kp.lastActivity,
+      client_count: kp.clients.size,
+      ready: kp.ready,
+    }));
   },
 
   forceStopAll(): void {

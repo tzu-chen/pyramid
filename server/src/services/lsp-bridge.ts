@@ -18,6 +18,7 @@ export interface LspServerConfig {
 interface LspProcess {
   process: ChildProcess;
   config: LspServerConfig;
+  startedAt: number;
   lastActivity: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   clients: Set<WebSocket>;
@@ -25,6 +26,14 @@ interface LspProcess {
   initialized: boolean;
   initializePending: boolean;
   initializeResult: unknown | null;
+}
+
+export interface RunningLspInfo {
+  session_id: string;
+  pid: number | null;
+  started_at: number;
+  last_activity: number;
+  client_count: number;
 }
 
 const HEADER_SEPARATOR = Buffer.from('\r\n\r\n');
@@ -93,10 +102,12 @@ export class LspBridge {
       env: config.env,
     });
 
+    const now = Date.now();
     const lp: LspProcess = {
       process: proc,
       config,
-      lastActivity: Date.now(),
+      startedAt: now,
+      lastActivity: now,
       idleTimer: null,
       clients: new Set(),
       stdoutBuffer: Buffer.alloc(0),
@@ -243,6 +254,16 @@ export class LspBridge {
 
   isRunning(sessionId: string): boolean {
     return this.processes.has(sessionId);
+  }
+
+  listRunning(): RunningLspInfo[] {
+    return Array.from(this.processes.entries()).map(([sessionId, lp]) => ({
+      session_id: sessionId,
+      pid: lp.process.pid ?? null,
+      started_at: lp.startedAt,
+      last_activity: lp.lastActivity,
+      client_count: lp.clients.size,
+    }));
   }
 
   stopAll(): void {

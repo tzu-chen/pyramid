@@ -1,5 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { execFile } from 'child_process';
+import db from '../db.js';
+import { leanLsp } from '../services/lean-lsp.js';
+import { cppLsp } from '../services/cpp-lsp.js';
+import { ocamlLsp } from '../services/ocaml-lsp.js';
+import { ocamlDap } from '../services/ocaml-dap.js';
+import { notebookKernel } from '../services/notebook-kernel.js';
+import { terminal } from '../services/terminal.js';
 
 const router = Router();
 
@@ -216,6 +223,146 @@ async function probe(def: BackendDef): Promise<BackendInfo> {
     error: null,
   };
 }
+
+interface RunningServiceInfo {
+  kind: 'lsp' | 'kernel' | 'dap' | 'terminal';
+  name: string;             // human-readable: "Lean LSP", "clangd", ...
+  command: string;          // underlying binary
+  pid: number | null;
+  started_at: number;       // ms epoch
+  client_count?: number;
+  ready?: boolean;          // notebook kernel
+  tab_id?: string;          // terminal
+  cols?: number;            // terminal
+  rows?: number;            // terminal
+}
+
+interface RunningSessionInfo {
+  session_id: string;
+  title: string | null;     // null if the session row no longer exists
+  session_type: string | null;
+  language: string | null;
+  status: string | null;
+  services: RunningServiceInfo[];
+}
+
+function addService(map: Map<string, RunningServiceInfo[]>, sessionId: string, svc: RunningServiceInfo): void {
+  const arr = map.get(sessionId);
+  if (arr) arr.push(svc);
+  else map.set(sessionId, [svc]);
+}
+
+// GET /api/backends/running
+router.get('/running', (_req: Request, res: Response) => {
+  try {
+    const bySession = new Map<string, RunningServiceInfo[]>();
+
+    for (const info of leanLsp.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'lsp',
+        name: 'Lean LSP',
+        command: 'lean --server',
+        pid: info.pid,
+        started_at: info.started_at,
+        client_count: info.client_count,
+      });
+    }
+    for (const info of cppLsp.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'lsp',
+        name: 'clangd',
+        command: 'clangd',
+        pid: info.pid,
+        started_at: info.started_at,
+        client_count: info.client_count,
+      });
+    }
+    for (const info of ocamlLsp.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'lsp',
+        name: 'ocamllsp',
+        command: 'ocamllsp',
+        pid: info.pid,
+        started_at: info.started_at,
+        client_count: info.client_count,
+      });
+    }
+    for (const info of ocamlDap.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'dap',
+        name: 'OCaml debugger',
+        command: 'ocamlearlybird',
+        pid: info.pid,
+        started_at: info.started_at,
+      });
+    }
+    for (const info of notebookKernel.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'kernel',
+        name: 'Jupyter kernel',
+        command: 'python3 jupyter-bridge.py',
+        pid: info.pid,
+        started_at: info.started_at,
+        client_count: info.client_count,
+        ready: info.ready,
+      });
+    }
+    for (const info of terminal.listRunning()) {
+      addService(bySession, info.session_id, {
+        kind: 'terminal',
+        name: `Terminal (${info.tab_id})`,
+        command: process.env.SHELL || '/bin/bash',
+        pid: info.pid,
+        started_at: info.started_at,
+        client_count: info.client_count,
+        tab_id: info.tab_id,
+        cols: info.cols,
+        rows: info.rows,
+      });
+    }
+
+    const sessionIds = Array.from(bySession.keys());
+    const sessions: RunningSessionInfo[] = [];
+
+    if (sessionIds.length > 0) {
+      const placeholders = sessionIds.map(() => '?').join(',');
+      const rows = db.prepare(
+        `SELECT id, title, session_type, language, status FROM sessions WHERE id IN (${placeholders})`
+      ).all(...sessionIds) as Array<{
+        id: string;
+        title: string;
+        session_type: string;
+        language: string;
+        status: string;
+      }>;
+      const byId = new Map(rows.map(r => [r.id, r]));
+
+      for (const sessionId of sessionIds) {
+        const row = byId.get(sessionId);
+        const services = (bySession.get(sessionId) ?? []).slice().sort((a, b) => a.started_at - b.started_at);
+        sessions.push({
+          session_id: sessionId,
+          title: row?.title ?? null,
+          session_type: row?.session_type ?? null,
+          language: row?.language ?? null,
+          status: row?.status ?? null,
+          services,
+        });
+      }
+
+      sessions.sort((a, b) => (a.title ?? a.session_id).localeCompare(b.title ?? b.session_id));
+    }
+
+    res.json({
+      checked_at: new Date().toISOString(),
+      session_count: sessions.length,
+      service_count: sessions.reduce((sum, s) => sum + s.services.length, 0),
+      sessions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 // GET /api/backends
 router.get('/', async (_req: Request, res: Response) => {

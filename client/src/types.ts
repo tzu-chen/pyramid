@@ -105,3 +105,34 @@ export interface BackendsResponse {
   platform: string;
   backends: BackendInfo[];
 }
+
+export type RunningServiceKind = 'lsp' | 'kernel' | 'dap' | 'terminal';
+
+export interface RunningServiceInfo {
+  kind: RunningServiceKind;
+  name: string;
+  command: string;
+  pid: number | null;
+  started_at: number;
+  client_count?: number;
+  ready?: boolean;
+  tab_id?: string;
+  cols?: number;
+  rows?: number;
+}
+
+export interface RunningSessionInfo {
+  session_id: string;
+  title: string | null;
+  session_type: string | null;
+  language: string | null;
+  status: string | null;
+  services: RunningServiceInfo[];
+}
+
+export interface RunningSessionsResponse {
+  checked_at: string;
+  session_count: number;
+  service_count: number;
+  sessions: RunningSessionInfo[];
+}

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { WebSocket } from 'ws';
-import { DapBridge } from './dap-bridge.js';
+import { DapBridge, RunningDapInfo } from './dap-bridge.js';
 import { ensureSymlink, symlinkPath, rewriteBytecodeFiles } from './bc-fixup.js';
 
 const bridge = new DapBridge();
@@ -44,6 +44,10 @@ export const ocamlDap = {
 
   isRunning(sessionId: string): boolean {
     return bridge.isRunning(sessionId);
+  },
+
+  listRunning(): RunningDapInfo[] {
+    return bridge.listRunning();
   },
 
   stop(sessionId: string): void {

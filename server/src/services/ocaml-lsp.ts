@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { LspBridge } from './lsp-bridge.js';
+import { LspBridge, RunningLspInfo } from './lsp-bridge.js';
 
 const bridge = new LspBridge();
 
@@ -18,6 +18,10 @@ export const ocamlLsp = {
 
   isRunning(sessionId: string): boolean {
     return bridge.isRunning(sessionId);
+  },
+
+  listRunning(): RunningLspInfo[] {
+    return bridge.listRunning();
   },
 
   stopLsp(sessionId: string): void {

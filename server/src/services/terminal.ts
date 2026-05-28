@@ -14,6 +14,17 @@ interface TerminalProcess {
   clients: Set<WebSocket>;
   idleTimer: ReturnType<typeof setTimeout> | null;
   scrollback: string;
+  startedAt: number;
+}
+
+export interface RunningTerminalInfo {
+  session_id: string;
+  tab_id: string;
+  pid: number | null;
+  started_at: number;
+  client_count: number;
+  cols: number;
+  rows: number;
 }
 
 const processes = new Map<string, TerminalProcess>();
@@ -65,6 +76,7 @@ export const terminal = {
       clients: new Set(),
       idleTimer: null,
       scrollback: '',
+      startedAt: Date.now(),
     };
 
     ptyProc.onData((data) => {
@@ -142,6 +154,23 @@ export const terminal = {
 
   isRunning(sessionId: string, tabId: string): boolean {
     return processes.has(key(sessionId, tabId));
+  },
+
+  listRunning(): RunningTerminalInfo[] {
+    const out: RunningTerminalInfo[] = [];
+    for (const [k, tp] of processes) {
+      const sep = k.indexOf(':');
+      out.push({
+        session_id: k.slice(0, sep),
+        tab_id: k.slice(sep + 1),
+        pid: tp.pty.pid ?? null,
+        started_at: tp.startedAt,
+        client_count: tp.clients.size,
+        cols: tp.cols,
+        rows: tp.rows,
+      });
+    }
+    return out;
   },
 
   forceStopAll(): void {

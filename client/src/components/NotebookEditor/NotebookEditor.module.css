@@ -178,9 +178,26 @@
   margin-left: 4px;
 }
 
+.cellTiming {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 6px;
+  padding: 1px 6px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.cellTimingRunning {
+  color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+
 .cellActions {
   display: flex;
   gap: 4px;
+  margin-left: auto;
 }
 
 .cellActions button {

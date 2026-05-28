@@ -37,6 +37,13 @@ interface DapAdapter {
   config: DapAdapterConfig;
   client: WebSocket;
   stdoutBuffer: Buffer;
+  startedAt: number;
+}
+
+export interface RunningDapInfo {
+  session_id: string;
+  pid: number | null;
+  started_at: number;
 }
 
 const HEADER_SEPARATOR = Buffer.from('\r\n\r\n');
@@ -114,6 +121,7 @@ export class DapBridge {
       config,
       client: ws,
       stdoutBuffer: Buffer.alloc(0),
+      startedAt: Date.now(),
     };
     this.adapters.set(sessionId, da);
 
@@ -214,6 +222,14 @@ export class DapBridge {
 
   isRunning(sessionId: string): boolean {
     return this.adapters.has(sessionId);
+  }
+
+  listRunning(): RunningDapInfo[] {
+    return Array.from(this.adapters.entries()).map(([sessionId, da]) => ({
+      session_id: sessionId,
+      pid: da.process.pid ?? null,
+      started_at: da.startedAt,
+    }));
   }
 
   forceStopAll(): void {

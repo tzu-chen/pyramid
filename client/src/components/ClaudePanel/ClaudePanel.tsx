@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   claudeService,
   scribeService,
@@ -11,6 +11,17 @@ import { LspDiagnostic } from '../CodeEditor/CodeEditor';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { SessionLink } from '../../types';
 import styles from './ClaudePanel.module.css';
+
+type BlockSource = 'auto-file' | 'auto-diagnostics' | 'auto-goal' | 'auto-run' | 'scribe' | 'custom';
+
+interface PanelContextBlock extends ContextBlock {
+  source: BlockSource;
+  editing?: boolean;
+}
+
+function isAutoSource(s: BlockSource): boolean {
+  return s === 'auto-file' || s === 'auto-diagnostics' || s === 'auto-goal' || s === 'auto-run';
+}
 
 interface ClaudePanelProps {
   sessionId: string;
@@ -46,7 +57,7 @@ function ClaudePanel({
   autoErrorMode,
   promptFocusRef,
 }: ClaudePanelProps) {
-  const [contextBlocks, setContextBlocks] = useState<(ContextBlock & { editing?: boolean })[]>([]);
+  const [contextBlocks, setContextBlocks] = useState<PanelContextBlock[]>([]);
   const [mode, setMode] = useState<ClaudeMode>('general');
   const [prompt, setPrompt] = useState('');
   const [history, setHistory] = useState<ClaudeMessage[]>([]);
@@ -80,12 +91,14 @@ function ClaudePanel({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [history.length, loading]);
 
-  // Auto-assemble context blocks when panel data changes
-  useEffect(() => {
-    const blocks: ContextBlock[] = [];
+  // Derive the auto-managed context blocks from current panel data. Called
+  // both from the sync effect below and at send time so the outgoing payload
+  // always carries the freshest file content / diagnostics / goal / last run.
+  const buildAutoBlocks = useCallback((): PanelContextBlock[] => {
+    const blocks: PanelContextBlock[] = [];
 
     if (fileContent) {
-      blocks.push({ label: `Current file: ${fileName}`, content: fileContent });
+      blocks.push({ label: `Current file: ${fileName}`, content: fileContent, source: 'auto-file' });
     }
 
     if (sessionType === 'lean') {
@@ -94,21 +107,31 @@ function ClaudePanel({
           const severity = d.severity === 1 ? 'Error' : d.severity === 2 ? 'Warning' : d.severity === 3 ? 'Info' : 'Hint';
           return `[${severity}] Line ${d.range.start.line + 1}: ${d.message}`;
         }).join('\n');
-        blocks.push({ label: 'Diagnostics', content: diagText });
+        blocks.push({ label: 'Diagnostics', content: diagText, source: 'auto-diagnostics' });
       }
       if (goalState) {
-        blocks.push({ label: 'Goal state', content: goalState });
+        blocks.push({ label: 'Goal state', content: goalState, source: 'auto-goal' });
       }
     } else {
       if (lastRun && (lastRun.exit_code !== 0 || lastRun.stderr)) {
         let output = '';
         if (lastRun.stdout) output += `stdout:\n${lastRun.stdout}\n\n`;
         if (lastRun.stderr) output += `stderr:\n${lastRun.stderr}`;
-        blocks.push({ label: 'Last run output', content: output.trim() });
+        blocks.push({ label: 'Last run output', content: output.trim(), source: 'auto-run' });
       }
     }
 
-    setContextBlocks(blocks);
+    return blocks;
+  }, [fileContent, fileName, sessionType, diagnostics, goalState, lastRun]);
+
+  // Refresh auto blocks whenever their underlying data changes; preserve
+  // user-added Scribe/custom blocks across edits.
+  useEffect(() => {
+    const autoBlocks = buildAutoBlocks();
+    setContextBlocks(prev => {
+      const userBlocks = prev.filter(b => !isAutoSource(b.source));
+      return [...autoBlocks, ...userBlocks];
+    });
 
     const hasErrors = sessionType === 'lean'
       ? diagnostics && diagnostics.some(d => d.severity === 1)
@@ -117,7 +140,7 @@ function ClaudePanel({
     if (autoErrorMode || hasErrors) {
       setMode('error_diagnosis');
     }
-  }, [fileContent, fileName, sessionType, diagnostics, goalState, lastRun, autoErrorMode]);
+  }, [buildAutoBlocks, sessionType, diagnostics, lastRun, autoErrorMode]);
 
   // Fetch Scribe context for linked nodes
   useEffect(() => {
@@ -131,7 +154,7 @@ function ClaudePanel({
             const content = formatScribeNode(node);
             setContextBlocks(prev => {
               if (prev.some(b => b.label === `Scribe: ${node.title}`)) return prev;
-              return [...prev, { label: `Scribe: ${node.title}`, content }];
+              return [...prev, { label: `Scribe: ${node.title}`, content, source: 'scribe' }];
             });
           }
         }).catch(() => {});
@@ -159,7 +182,7 @@ function ClaudePanel({
   };
 
   const handleAddFreeText = () => {
-    setContextBlocks(prev => [...prev, { label: 'Additional context', content: '', editing: true }]);
+    setContextBlocks(prev => [...prev, { label: 'Additional context', content: '', source: 'custom', editing: true }]);
   };
 
   const handleScribeSearch = async () => {
@@ -177,7 +200,7 @@ function ClaudePanel({
 
   const handleAddScribeNode = (node: ScribeNode) => {
     const content = formatScribeNode(node);
-    setContextBlocks(prev => [...prev, { label: `Scribe: ${node.title}`, content }]);
+    setContextBlocks(prev => [...prev, { label: `Scribe: ${node.title}`, content, source: 'scribe' }]);
     setAddingScribe(false);
     setScribeSearch('');
     setScribeResults([]);
@@ -189,7 +212,14 @@ function ClaudePanel({
     setError('');
 
     try {
-      const blocks = contextBlocks.map(({ label, content }) => ({ label, content }));
+      // Rebuild auto blocks at send time from current props so the latest
+      // file content / diagnostics / goal / run output go out even if a
+      // recent edit hasn't yet propagated into contextBlocks state.
+      const freshAutoBlocks = buildAutoBlocks();
+      const userBlocks = contextBlocks.filter(b => !isAutoSource(b.source));
+      const blocks: ContextBlock[] = [...freshAutoBlocks, ...userBlocks].map(
+        ({ label, content }) => ({ label, content })
+      );
       const result = await claudeService.ask(sessionId, prompt.trim(), blocks, mode);
       setHistory(prev => [...prev, result.user_message, result.assistant_message]);
       setPrompt('');

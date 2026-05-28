@@ -110,6 +110,24 @@ function statusDotClass(status: KernelStatus): string {
   }
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(sec < 10 ? 2 : 1)}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = Math.round(sec - min * 60);
+  return `${min}m ${remSec}s`;
+}
+
+function useTick(active: boolean, intervalMs: number): void {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => force(t => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [active, intervalMs]);
+}
+
 // Match a markdown heading on the first non-empty line of a cell's source.
 // Returns 0 if the cell is not a heading.
 function getHeadingLevel(cell: NotebookCell): number {
@@ -175,6 +193,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
       const cell = prev.cells[idx];
       let newOutputs = cell.outputs;
       let newCount = cell.execution_count;
+      let newMetadata: Record<string, unknown> | undefined;
 
       switch (event.type) {
         case 'stream': {
@@ -214,15 +233,28 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         case 'clear_output':
           newOutputs = [];
           break;
-        case 'execute_reply':
+        case 'execute_reply': {
           if (typeof event.execution_count === 'number') newCount = event.execution_count;
+          const meta = (cell.metadata || {}) as Record<string, unknown>;
+          const startedAt = typeof meta.run_started_at === 'number' ? meta.run_started_at : undefined;
+          if (startedAt !== undefined) {
+            const { run_started_at: _started, ...rest } = meta;
+            void _started;
+            newMetadata = { ...rest, last_duration_ms: Math.max(0, Date.now() - startedAt) };
+          }
           break;
+        }
         default:
           return prev;
       }
 
       const newCells = [...prev.cells];
-      newCells[idx] = { ...cell, outputs: newOutputs, execution_count: newCount };
+      newCells[idx] = {
+        ...cell,
+        outputs: newOutputs,
+        execution_count: newCount,
+        ...(newMetadata !== undefined ? { metadata: newMetadata } : {}),
+      };
       return { ...prev, cells: newCells };
     });
   }, []);
@@ -259,6 +291,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     const cell = nb.cells.find(c => c.id === cellId);
     if (!cell || cell.cell_type !== 'code') return;
     const sourceAtRun = cell.source;
+    const startedAt = Date.now();
     // clear outputs for this cell then send; record source so we can detect edits since last run
     setNotebook(prev => {
       if (!prev) return prev;
@@ -269,7 +302,12 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               ...c,
               outputs: [],
               execution_count: null,
-              metadata: { ...(c.metadata || {}), last_run_source: sourceAtRun },
+              metadata: {
+                ...(c.metadata || {}),
+                last_run_source: sourceAtRun,
+                run_started_at: startedAt,
+                last_duration_ms: undefined,
+              },
             }
           : c),
       };
@@ -622,6 +660,18 @@ function CellView(props: CellViewProps) {
     ? (running ? '[*]' : cell.execution_count != null ? `[${cell.execution_count}]` : '[ ]')
     : '';
 
+  const runStartedAt = typeof meta.run_started_at === 'number' ? meta.run_started_at : undefined;
+  const lastDurationMs = typeof meta.last_duration_ms === 'number' ? meta.last_duration_ms : undefined;
+  // Tick once per second while running so the live elapsed time updates.
+  useTick(running && runStartedAt !== undefined, 1000);
+  const timingLabel: string | null = cell.cell_type === 'code'
+    ? running && runStartedAt !== undefined
+      ? formatDuration(Date.now() - runStartedAt)
+      : lastDurationMs !== undefined
+        ? formatDuration(lastDurationMs)
+        : null
+    : null;
+
   return (
     <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
       <div
@@ -644,6 +694,14 @@ function CellView(props: CellViewProps) {
           </span>
           {sectionCollapsed && hiddenInSection > 0 && (
             <span className={styles.sectionCount}>· {hiddenInSection} cell{hiddenInSection === 1 ? '' : 's'} hidden</span>
+          )}
+          {timingLabel && (
+            <span
+              className={`${styles.cellTiming} ${running ? styles.cellTimingRunning : ''}`}
+              title={running ? 'Currently running' : 'Last run duration'}
+            >
+              {running ? `▶ ${timingLabel}` : timingLabel}
+            </span>
           )}
           <div className={styles.cellActions}>
             {cell.cell_type === 'code' && (
