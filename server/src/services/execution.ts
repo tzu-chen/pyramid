@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import { sampleProcessMemory } from './proc-memory.js';
 
 const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB
 
@@ -14,6 +15,7 @@ interface ExecutionResult {
   stderr: string;
   duration_ms: number;
   command: string;
+  peak_rss_bytes: number | null;
 }
 
 // Escape an arbitrary string for use as a single-quoted POSIX shell argument.
@@ -29,7 +31,10 @@ function getCommand(filename: string, language: string): { cmd: string; args: st
       return { cmd: 'julia', args: [filename], shell: false };
     case 'cpp': {
       const q = shellQuote(filename);
-      return { cmd: 'sh', args: ['-c', `g++ -O2 -std=c++20 -Wall -Wextra -o a.out ${q} && ./a.out`], shell: false };
+      // `exec ./a.out` so the shell is replaced by the program (same PID): the
+      // kernel resets VmHWM on execve, so /proc RSS sampling then reflects the
+      // user's program at runtime rather than the shell or the g++ compile.
+      return { cmd: 'sh', args: ['-c', `g++ -O2 -std=c++20 -Wall -Wextra -o a.out ${q} && exec ./a.out`], shell: false };
     }
     case 'ocaml':
       return { cmd: 'ocaml', args: [filename], shell: false };
@@ -72,6 +77,8 @@ export async function executeFile(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    const memSampler = sampleProcessMemory(proc.pid);
+
     if (options.stdin && proc.stdin) {
       proc.stdin.write(options.stdin);
       proc.stdin.end();
@@ -101,6 +108,7 @@ export async function executeFile(
 
     proc.on('close', (code) => {
       clearTimeout(timer);
+      const peak_rss_bytes = memSampler.stop();
       const duration_ms = Date.now() - startTime;
       resolve({
         exit_code: killed ? null : code,
@@ -108,11 +116,13 @@ export async function executeFile(
         stderr: killed ? stderr.slice(0, MAX_OUTPUT_SIZE) + '\n[Process timed out]' : stderr.slice(0, MAX_OUTPUT_SIZE),
         duration_ms,
         command: commandStr,
+        peak_rss_bytes,
       });
     });
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      memSampler.stop();
       const duration_ms = Date.now() - startTime;
       resolve({
         exit_code: null,
@@ -120,6 +130,7 @@ export async function executeFile(
         stderr: err.message,
         duration_ms,
         command: commandStr,
+        peak_rss_bytes: null,
       });
     });
   });

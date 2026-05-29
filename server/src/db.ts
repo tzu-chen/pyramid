@@ -145,6 +145,11 @@ db.exec(`
   if (!cols.some((c) => c.name === 'flavor')) {
     db.exec(`ALTER TABLE execution_runs ADD COLUMN flavor TEXT`);
   }
+  // Peak resident set size (bytes) sampled during the run. Nullable: null when
+  // sampling is unsupported (non-Linux) or the process exited before any sample.
+  if (!cols.some((c) => c.name === 'peak_rss_bytes')) {
+    db.exec(`ALTER TABLE execution_runs ADD COLUMN peak_rss_bytes INTEGER`);
+  }
 }
 
 // FTS5 virtual table for sessions search

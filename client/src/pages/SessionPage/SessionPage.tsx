@@ -47,6 +47,7 @@ import {
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
+import { formatBytes } from '../../utils/format';
 import styles from './SessionPage.module.css';
 
 type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'debug' | 'claude' | 'notes' | 'links';
@@ -1677,6 +1678,7 @@ function SessionPage() {
                       <span className={styles.runCommand}>{latestRun.command}</span>
                       <span className={styles.runMeta}>
                         {latestRun.exit_code !== null ? `exit ${latestRun.exit_code}` : 'timed out'} | {latestRun.duration_ms}ms
+                        {latestRun.peak_rss_bytes != null && ` | ${formatBytes(latestRun.peak_rss_bytes)} peak`}
                       </span>
                     </div>
                     {latestRun.stdout && (
@@ -1696,7 +1698,7 @@ function SessionPage() {
                     {runs.slice(1).map(run => (
                       <div key={run.id} className={styles.historyItem}>
                         <span className={styles.historyMeta}>
-                          {run.exit_code !== null ? `exit ${run.exit_code}` : 'timeout'} | {run.duration_ms}ms | {new Date(run.created_at).toLocaleTimeString()}
+                          {run.exit_code !== null ? `exit ${run.exit_code}` : 'timeout'} | {run.duration_ms}ms{run.peak_rss_bytes != null ? ` | ${formatBytes(run.peak_rss_bytes)}` : ''} | {new Date(run.created_at).toLocaleTimeString()}
                         </span>
                         {run.stdout && <pre className={styles.historyOutput}>{run.stdout.slice(0, 200)}</pre>}
                       </div>

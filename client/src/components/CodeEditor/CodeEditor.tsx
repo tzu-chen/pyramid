@@ -502,6 +502,18 @@ const debugStoppedTheme = EditorView.theme({
   },
 });
 
+// --- Line-number gutter toggle ---
+//
+// basicSetup always bundles the line-number gutter; rather than rebuild the
+// setup we hide it via a theme swapped through a compartment. We hide the whole
+// `.cm-gutters` column (line numbers + fold gutter) so the editor's left margin
+// collapses too. `!important` because oneDark and the base theme also style
+// `.cm-gutters`, and theme rules otherwise tie on specificity.
+
+const hideLineNumbersTheme = EditorView.theme({
+  '.cm-gutters': { display: 'none !important' },
+});
+
 // --- LSP Diagnostics Extension ---
 
 export interface LspDiagnostic {
@@ -549,6 +561,8 @@ interface CodeEditorProps {
   externalCompletion?: ExternalCompletionSource;
   externalHover?: ExternalHoverSource;
   hideSearchBar?: boolean;
+  // Show the line-number gutter (default true). Toggled live via a compartment.
+  showLineNumbers?: boolean;
   // Debugger integration. All line numbers are 1-indexed.
   showBreakpointGutter?: boolean;
   // Map from breakpoint line → verified flag (adapter confirmed it resolves).
@@ -594,12 +608,14 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false, showBreakpointGutter = false, breakpoints, onBreakpointToggle, debugStoppedLine }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false, showLineNumbers = true, showBreakpointGutter = false, breakpoints, onBreakpointToggle, debugStoppedLine }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
   const fontSizeCompartment = useRef(new Compartment());
+  const lineNumbersCompartment = useRef(new Compartment());
   const vimCompartment = useRef(new Compartment());
+  const showLineNumbersRef = useRef(showLineNumbers);
   const fontSizeRef = useRef(fontSize);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeMatchItemRef = useRef<HTMLLIElement>(null);
@@ -647,6 +663,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       basicSetup,
       focusSearchKeymap,
       tabKeymap,
+      lineNumbersCompartment.current.of(showLineNumbersRef.current ? [] : hideLineNumbersTheme),
       searchHighlightField,
       searchTheme,
       highlightedLineField,
@@ -895,6 +912,18 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       ),
     });
   }, [fontSize]);
+
+  // Toggle the line-number gutter without recreating the editor
+  useEffect(() => {
+    showLineNumbersRef.current = showLineNumbers;
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: lineNumbersCompartment.current.reconfigure(
+        showLineNumbers ? [] : hideLineNumbersTheme
+      ),
+    });
+  }, [showLineNumbers]);
 
   // Toggle vim mode without recreating the editor
   useEffect(() => {

@@ -254,8 +254,8 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
       const runId = uuidv4();
       const now = getCstTimestamp();
       db.prepare(`
-        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor, peak_rss_bytes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         runId,
         req.params.id,
@@ -269,6 +269,7 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
         buildId,
         binary,
         flavorDirName(flavor),
+        run.peakRssBytes,
       );
 
       const persistedRun = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
@@ -352,8 +353,8 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
       const runId = uuidv4();
       const now = getCstTimestamp();
       db.prepare(`
-        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor, peak_rss_bytes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         runId,
         req.params.id,
@@ -367,6 +368,7 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
         buildId,
         binary,
         duneFlavorDirName(flavor),
+        run.peakRssBytes,
       );
 
       const persistedRun = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
@@ -399,9 +401,9 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
     const now = getCstTimestamp();
 
     db.prepare(`
-      INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(runId, req.params.id, file.id as string, result.command, result.exit_code, result.stdout, result.stderr, result.duration_ms, now);
+      INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, peak_rss_bytes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(runId, req.params.id, file.id as string, result.command, result.exit_code, result.stdout, result.stderr, result.duration_ms, now, result.peak_rss_bytes);
 
     const run = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
     res.json(run);

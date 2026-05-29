@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { sampleProcessMemory } from './proc-memory.js';
 
 const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB cap, matches execution.ts
 
@@ -57,6 +58,7 @@ export interface RunResult {
   stderr: string;
   durationMs: number;
   command: string;
+  peakRssBytes: number | null;
 }
 
 const VALID_BUILD_TYPES: ReadonlySet<BuildType> = new Set([
@@ -454,6 +456,8 @@ export async function runBinary(
       env: opts?.env ? { ...process.env, ...opts.env } : process.env,
     });
 
+    const memSampler = sampleProcessMemory(proc.pid);
+
     if (opts?.stdin && proc.stdin) {
       proc.stdin.write(opts.stdin);
       proc.stdin.end();
@@ -478,6 +482,7 @@ export async function runBinary(
 
     proc.on('close', (code) => {
       clearTimeout(timer);
+      const peakRssBytes = memSampler.stop();
       const command = [binaryPath, ...args].join(' ');
       resolve({
         exitCode: killed ? null : code,
@@ -485,17 +490,20 @@ export async function runBinary(
         stderr: killed ? clamp(stderr) + '\n[Process timed out]' : clamp(stderr),
         durationMs: Date.now() - start,
         command,
+        peakRssBytes,
       });
     });
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      memSampler.stop();
       resolve({
         exitCode: null,
         stdout: '',
         stderr: err.message,
         durationMs: Date.now() - start,
         command: [binaryPath, ...args].join(' '),
+        peakRssBytes: null,
       });
     });
   });

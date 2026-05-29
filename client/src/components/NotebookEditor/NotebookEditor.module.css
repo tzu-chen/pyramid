@@ -35,6 +35,12 @@
   cursor: not-allowed;
 }
 
+.toggleActive {
+  background: var(--color-bg-tertiary) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-text) !important;
+}
+
 .statusDot {
   width: 10px;
   height: 10px;
@@ -192,6 +198,17 @@
 .cellTimingRunning {
   color: var(--color-primary);
   background-color: var(--color-primary-light);
+}
+
+.cellMemory {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 6px;
+  padding: 1px 6px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 .cellActions {

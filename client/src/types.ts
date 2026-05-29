@@ -47,6 +47,9 @@ export interface ExecutionRun {
   stderr: string;
   duration_ms: number;
   created_at: string;
+  // Peak resident set size (bytes) during the run; null when unavailable
+  // (non-Linux host, or process exited before any sample).
+  peak_rss_bytes?: number | null;
 }
 
 export type LakeStatus = 'initializing' | 'ready' | 'building' | 'error';

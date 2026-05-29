@@ -4,6 +4,8 @@ import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
 import { useNotebookKernel, KernelStatus, CellOutput } from '../../hooks/useNotebookKernel';
 import { useDebounce } from '../../hooks/useDebounce';
 import { fileService } from '../../services/fileService';
+import { editorStorage } from '../../services/editorStorage';
+import { formatBytes } from '../../utils/format';
 import styles from './NotebookEditor.module.css';
 
 type CellType = 'code' | 'markdown';
@@ -148,6 +150,8 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
+  const [showLineNumbers, setShowLineNumbers] = useState(() => editorStorage.getNotebookLineNumbers());
+  const [showCellNumbers, setShowCellNumbers] = useState(() => editorStorage.getNotebookCellNumbers());
   const notebookDataRef = useRef<Notebook | null>(null);
   notebookDataRef.current = notebook;
   const notebookRef = useRef<HTMLDivElement>(null);
@@ -237,11 +241,17 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
           if (typeof event.execution_count === 'number') newCount = event.execution_count;
           const meta = (cell.metadata || {}) as Record<string, unknown>;
           const startedAt = typeof meta.run_started_at === 'number' ? meta.run_started_at : undefined;
+          const { run_started_at: _started, ...rest } = meta;
+          void _started;
+          const updated: Record<string, unknown> = { ...rest };
           if (startedAt !== undefined) {
-            const { run_started_at: _started, ...rest } = meta;
-            void _started;
-            newMetadata = { ...rest, last_duration_ms: Math.max(0, Date.now() - startedAt) };
+            updated.last_duration_ms = Math.max(0, Date.now() - startedAt);
           }
+          // Peak kernel RSS and per-cell delta from jupyter-bridge (null when
+          // the host can't sample, e.g. non-Linux).
+          updated.last_peak_rss = typeof event.peak_rss === 'number' ? event.peak_rss : null;
+          updated.last_rss_delta = typeof event.rss_delta === 'number' ? event.rss_delta : null;
+          newMetadata = updated;
           break;
         }
         default:
@@ -307,6 +317,8 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
                 last_run_source: sourceAtRun,
                 run_started_at: startedAt,
                 last_duration_ms: undefined,
+                last_peak_rss: undefined,
+                last_rss_delta: undefined,
               },
             }
           : c),
@@ -314,6 +326,22 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     });
     kernel.executeCell(cellId, sourceAtRun);
   }, [kernel]);
+
+  const toggleLineNumbers = useCallback(() => {
+    setShowLineNumbers(prev => {
+      const next = !prev;
+      editorStorage.saveNotebookLineNumbers(next);
+      return next;
+    });
+  }, []);
+
+  const toggleCellNumbers = useCallback(() => {
+    setShowCellNumbers(prev => {
+      const next = !prev;
+      editorStorage.saveNotebookCellNumbers(next);
+      return next;
+    });
+  }, []);
 
   const runAll = useCallback(() => {
     const nb = notebookDataRef.current;
@@ -575,13 +603,27 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         <span className={`${styles.statusDot} ${statusDotClass(kernel.status)}`} />
         <span className={styles.statusLabel}>{statusLabel(kernel.status)}</span>
         <div style={{ flex: 1 }} />
+        <button
+          onClick={toggleLineNumbers}
+          className={showLineNumbers ? styles.toggleActive : ''}
+          title={showLineNumbers ? 'Hide line numbers in all cells' : 'Show line numbers in all cells'}
+        >
+          # Lines
+        </button>
+        <button
+          onClick={toggleCellNumbers}
+          className={showCellNumbers ? styles.toggleActive : ''}
+          title={showCellNumbers ? 'Hide cell numbers' : 'Show cell numbers'}
+        >
+          # Cells
+        </button>
         <button onClick={runAll} disabled={kernel.status !== 'idle' && kernel.status !== 'busy'}>Run All</button>
         <button onClick={kernel.interrupt} disabled={kernel.status !== 'busy'}>Interrupt</button>
         <button onClick={kernel.restart} disabled={kernel.status === 'disconnected' || kernel.status === 'connecting'}>Restart</button>
       </div>
 
       <div className={styles.cellList}>
-        {notebook.cells.map(cell => {
+        {notebook.cells.map((cell) => {
           if (hiddenCells.has(cell.id)) return null;
           const headingLevel = getHeadingLevel(cell);
           const sectionCollapsed = headingLevel > 0
@@ -592,6 +634,8 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
             <CellView
               key={cell.id}
               cell={cell}
+              showCellNumber={showCellNumbers}
+              showLineNumbers={showLineNumbers}
               active={cell.id === activeCellId}
               running={kernel.runningCellId === cell.id}
               kernelIdle={kernel.status === 'idle' || kernel.status === 'busy'}
@@ -622,6 +666,8 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
 
 interface CellViewProps {
   cell: NotebookCell;
+  showCellNumber: boolean;
+  showLineNumbers: boolean;
   active: boolean;
   running: boolean;
   kernelIdle: boolean;
@@ -645,7 +691,7 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
+  const { cell, showCellNumber, showLineNumbers, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
   const meta = (cell.metadata || {}) as Record<string, unknown>;
   const outputsCollapsed = !!meta.collapsed;
   const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
@@ -671,6 +717,18 @@ function CellView(props: CellViewProps) {
         ? formatDuration(lastDurationMs)
         : null
     : null;
+
+  // Peak kernel RSS for the last run of this cell (and the per-cell delta,
+  // shown in the tooltip). Hidden while running and when unavailable.
+  const peakRss = typeof meta.last_peak_rss === 'number' ? meta.last_peak_rss : undefined;
+  const rssDelta = typeof meta.last_rss_delta === 'number' ? meta.last_rss_delta : undefined;
+  const memoryLabel: string | null =
+    cell.cell_type === 'code' && !running && peakRss !== undefined
+      ? formatBytes(peakRss)
+      : null;
+  const memoryTitle = rssDelta !== undefined
+    ? `Peak kernel memory (RSS); ${rssDelta >= 0 ? '+' : ''}${formatBytes(rssDelta)} during this cell`
+    : 'Peak kernel memory (RSS) during this cell';
 
   return (
     <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
@@ -703,6 +761,11 @@ function CellView(props: CellViewProps) {
               {running ? `▶ ${timingLabel}` : timingLabel}
             </span>
           )}
+          {memoryLabel && (
+            <span className={styles.cellMemory} title={memoryTitle}>
+              {memoryLabel}
+            </span>
+          )}
           <div className={styles.cellActions}>
             {cell.cell_type === 'code' && (
               <button onClick={(e) => { e.stopPropagation(); onRun(); }} disabled={!kernelIdle || running} title="Run cell (Shift+Enter)">Run</button>
@@ -723,7 +786,7 @@ function CellView(props: CellViewProps) {
           </div>
         </div>
         <div className={styles.cellBody}>
-          {cell.cell_type === 'code' && (
+          {cell.cell_type === 'code' && showCellNumber && (
             <div className={styles.executionGutter}>{executionMark}</div>
           )}
           <div className={styles.cellContent}>
@@ -745,6 +808,7 @@ function CellView(props: CellViewProps) {
                   onChange={onChange}
                   fontSize={fontSize}
                   externalCompletion={completionSource}
+                  showLineNumbers={showLineNumbers}
                   hideSearchBar
                 />
               </div>

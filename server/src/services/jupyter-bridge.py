@@ -35,6 +35,70 @@ except ImportError:
     sys.exit(1)
 
 
+# --- Per-cell memory sampling -------------------------------------------------
+#
+# The kernel is a long-lived process, so the meaningful per-cell number is the
+# peak resident set size (RSS) observed while the cell runs, plus the delta from
+# the RSS at cell start. We poll /proc/<pid>/status:VmRSS on a background thread
+# between the execute_request and its execute_reply. VmHWM is unusable here
+# because it's a lifetime high-water mark, not per-cell. Linux-only; on other
+# platforms reads return None and we report null.
+
+EXEC_SAMPLERS = {}        # msg_id -> RssSampler
+EXEC_SAMPLERS_LOCK = threading.Lock()
+
+
+def kernel_pid(km):
+    # jupyter_client moved kernels behind provisioners in v7; try both shapes.
+    try:
+        prov = getattr(km, "provisioner", None)
+        if prov is not None and getattr(prov, "pid", None):
+            return prov.pid
+    except Exception:
+        pass
+    try:
+        k = getattr(km, "kernel", None)
+        if k is not None and getattr(k, "pid", None):
+            return k.pid
+    except Exception:
+        pass
+    return None
+
+
+def read_rss_bytes(pid):
+    try:
+        with open("/proc/%d/status" % pid) as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    # "VmRSS:   12345 kB" — the kB label is really KiB.
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        return None
+    return None
+
+
+class RssSampler(threading.Thread):
+    def __init__(self, pid):
+        super().__init__(daemon=True)
+        self.pid = pid
+        self._stop = threading.Event()
+        self.baseline = read_rss_bytes(pid)
+        self.peak = self.baseline or 0
+
+    def run(self):
+        while not self._stop.wait(0.03):
+            r = read_rss_bytes(self.pid)
+            if r is not None and r > self.peak:
+                self.peak = r
+
+    def stop(self):
+        self._stop.set()
+        r = read_rss_bytes(self.pid)
+        if r is not None and r > self.peak:
+            self.peak = r
+        return self.peak, self.baseline
+
+
 # Msg IDs for inspect requests. iopub stream output for these msg IDs is
 # captured into INSPECT_BUFFERS instead of being broadcast, and an
 # `inspect_reply` event is emitted on execute_reply.
@@ -168,9 +232,21 @@ def shell_loop(kc):
                       "variables": data})
             continue
         if mtype == "execute_reply":
+            peak_rss = None
+            rss_delta = None
+            with EXEC_SAMPLERS_LOCK:
+                sampler = EXEC_SAMPLERS.pop(parent_id, None)
+            if sampler is not None:
+                peak, baseline = sampler.stop()
+                if peak:
+                    peak_rss = peak
+                    if baseline is not None:
+                        rss_delta = peak - baseline
             emit({"type": "execute_reply", "parent_msg_id": parent_id,
                   "status": content.get("status"),
-                  "execution_count": content.get("execution_count")})
+                  "execution_count": content.get("execution_count"),
+                  "peak_rss": peak_rss,
+                  "rss_delta": rss_delta})
         elif mtype == "complete_reply":
             emit({"type": "complete_reply", "parent_msg_id": parent_id,
                   "matches": content.get("matches", []),
@@ -220,6 +296,13 @@ def main():
             if client_msg_id:
                 msg["header"]["msg_id"] = client_msg_id
                 msg["msg_id"] = client_msg_id
+            # Start sampling the kernel's RSS for the duration of this cell.
+            pid = kernel_pid(km)
+            if client_msg_id and pid:
+                sampler = RssSampler(pid)
+                with EXEC_SAMPLERS_LOCK:
+                    EXEC_SAMPLERS[client_msg_id] = sampler
+                sampler.start()
             kc.shell_channel.send(msg)
         elif cmd == "inspect":
             client_msg_id = req.get("msg_id", "")
@@ -250,6 +333,12 @@ def main():
             except Exception:
                 pass
         elif cmd == "restart":
+            # Drop any in-flight samplers; their pid is about to go away and the
+            # matching execute_reply may never arrive.
+            with EXEC_SAMPLERS_LOCK:
+                for s in EXEC_SAMPLERS.values():
+                    s.stop()
+                EXEC_SAMPLERS.clear()
             try:
                 km.restart_kernel(now=False)
                 try: kc.wait_for_ready(timeout=30)
