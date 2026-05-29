@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { parse as parseUrl } from 'url';
 import './db.js';
 import db from './db.js';
+import { LEAN_PROJECTS_DIR, resolveSessionCwd } from './paths.js';
 import sessionsRouter from './routes/sessions.js';
 import filesRouter from './routes/files.js';
 import executionRouter from './routes/execution.js';
@@ -74,7 +75,7 @@ server.on('upgrade', (request, socket, head) => {
       .get(sessionId) as { project_path: string } | undefined;
     if (!meta) { socket.destroy(); return; }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const projectPath = path.join(__dirname, '..', 'data', 'lean-projects', sessionId);
+      const projectPath = path.join(LEAN_PROJECTS_DIR, sessionId);
       leanLsp.handleWebSocket(ws, sessionId, projectPath);
     });
     return;
@@ -91,7 +92,7 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const cwd = path.join(__dirname, '..', session.working_dir);
+      const cwd = resolveSessionCwd(session.working_dir);
       // Bootstrap .clangd for sessions created before this feature landed
       cppProject.ensureClangdConfig(cwd);
       cppLsp.handleWebSocket(ws, sessionId, cwd);
@@ -110,7 +111,7 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const cwd = path.join(__dirname, '..', session.working_dir);
+      const cwd = resolveSessionCwd(session.working_dir);
       // Bootstrap .ocamlformat / .merlin for sessions created before this feature landed
       ocamlProject.ensureDefaults(cwd);
       ocamlLsp.handleWebSocket(ws, sessionId, cwd);
@@ -129,7 +130,7 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const cwd = path.join(__dirname, '..', session.working_dir);
+      const cwd = resolveSessionCwd(session.working_dir);
       ocamlDap.handleWebSocket(ws, sessionId, cwd);
     });
     return;
@@ -143,7 +144,7 @@ server.on('upgrade', (request, socket, head) => {
       .get(sessionId) as { session_type: string; working_dir: string } | undefined;
     if (!session || session.session_type !== 'notebook') { socket.destroy(); return; }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const cwd = path.join(__dirname, '..', session.working_dir);
+      const cwd = resolveSessionCwd(session.working_dir);
       notebookKernel.handleWebSocket(ws, sessionId, cwd);
     });
     return;
@@ -158,7 +159,7 @@ server.on('upgrade', (request, socket, head) => {
       .get(sessionId) as { session_type: string; working_dir: string } | undefined;
     if (!session || session.session_type !== 'freeform') { socket.destroy(); return; }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const cwd = path.join(__dirname, '..', session.working_dir);
+      const cwd = resolveSessionCwd(session.working_dir);
       terminal.handleWebSocket(ws, sessionId, tabId, cwd);
     });
     return;

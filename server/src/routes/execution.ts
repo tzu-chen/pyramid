@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import db from '../db.js';
+import { resolveSessionCwd } from '../paths.js';
 import { executeFile } from '../services/execution.js';
 import fs from 'fs';
 import {
@@ -55,7 +56,7 @@ function getCstTimestamp(): string {
 }
 
 function sessionAbsDir(sessionWorkingDir: string): string {
-  return path.join(__dirname, '..', '..', sessionWorkingDir);
+  return resolveSessionCwd(sessionWorkingDir);
 }
 
 function parseFlavor(input: unknown): BuildFlavor {

@@ -2,9 +2,8 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
+import { DATA_DIR, LEAN_PROJECTS_DIR } from '../paths.js';
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
-const LEAN_PROJECTS_DIR = path.join(DATA_DIR, 'lean-projects');
 const LEAN_SHARED_DIR = path.join(DATA_DIR, 'lean-shared');
 const SHARED_MATHLIB_DIR = path.join(LEAN_SHARED_DIR, 'mathlib');
 const DEFAULT_LEAN_VERSION = 'leanprover/lean4:v4.16.0';

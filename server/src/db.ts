@@ -1,13 +1,13 @@
 import Database, { type Database as DatabaseType } from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { DATA_DIR, SESSIONS_DIR, LEAN_PROJECTS_DIR } from './paths.js';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'pyramid.db');
 
 // Ensure data directories exist
-fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
-fs.mkdirSync(path.join(DATA_DIR, 'lean-projects'), { recursive: true });
+fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+fs.mkdirSync(LEAN_PROJECTS_DIR, { recursive: true });
 
 const db: DatabaseType = new Database(DB_PATH);
 

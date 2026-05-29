@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
 import db from '../db.js';
+import { LEAN_PROJECTS_DIR } from '../paths.js';
 import { leanProject } from '../services/lean-project.js';
 
 const router = Router();
@@ -14,7 +15,7 @@ router.get('/:sessionId/meta', (req: Request, res: Response) => {
       res.status(404).json({ error: 'Lean session metadata not found' });
       return;
     }
-    const absProjectPath = path.resolve(__dirname, '..', '..', 'data', 'lean-projects', sessionId);
+    const absProjectPath = path.join(LEAN_PROJECTS_DIR, sessionId);
     res.json({ ...meta, absolute_project_path: absProjectPath });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

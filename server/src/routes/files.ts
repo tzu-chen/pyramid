@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import db from '../db.js';
+import { resolveSessionCwd } from '../paths.js';
 import { validateFilePath, cleanEmptyParentDirs } from '../utils/path-security.js';
 
 const router = Router();
@@ -16,7 +17,7 @@ function getCstTimestamp(): string {
 }
 
 function getSessionRoot(workingDir: string): string {
-  return path.join(__dirname, '..', '..', workingDir);
+  return resolveSessionCwd(workingDir);
 }
 
 // GET /api/sessions/:id/files

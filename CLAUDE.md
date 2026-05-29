@@ -34,7 +34,9 @@ npm start                 # Start production server (serves API + built frontend
 
 **Port assignment:** Pyramid uses port **3007** (server) and **5177** (Vite dev) to avoid conflicts with Navigate (3001/5173), Scribe (3003/5173), Monolith (3005/5173), and Granary (3009/5174). The Vite dev server proxies `/api` and `/ws` requests to `http://localhost:3007`.
 
-No `.env` files. The only server environment variable is `PORT` (defaults to 3007).
+No `.env` files. Server environment variables: `PORT` (defaults to 3007) and `SUITE_DATA_ROOT` (optional).
+
+**`SUITE_DATA_ROOT` (data location).** The data directory is resolved in one place — `server/src/paths.ts` (`DATA_DIR`, `SESSIONS_DIR`, `LEAN_PROJECTS_DIR`, `resolveSessionCwd`), imported by `db.ts`, `index.ts`, and the `sessions`/`files`/`execution`/`lean` routes plus `lean-project.ts`. When set, data lives at `$SUITE_DATA_ROOT/pyramid/` (`pyramid.db`, `sessions/`, `lean-projects/`, …); when unset it falls back **byte-for-byte** to the legacy in-repo `server/data/`. A session's `working_dir` is stored **relative to `DATA_DIR`** (e.g. `sessions/<id>`) and resolved via `resolveSessionCwd`; legacy rows stored a `data/<…>` prefix and were rebased by a one-time migration (`UPDATE sessions SET working_dir = substr(working_dir, 6) WHERE working_dir LIKE 'data/%'`). Never reintroduce the `data/` prefix or join `__dirname` with `working_dir`.
 
 ---
 

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
+import { LEAN_PROJECTS_DIR, resolveSessionCwd } from '../paths.js';
 import { leanProject } from '../services/lean-project.js';
 import { leanLsp } from '../services/lean-lsp.js';
 import { cppLsp } from '../services/cpp-lsp.js';
@@ -86,7 +87,7 @@ router.get('/:id', (req: Request, res: Response) => {
     const files = db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY is_primary DESC, created_at ASC').all(req.params.id);
     const runs = db.prepare('SELECT * FROM execution_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT 20').all(req.params.id);
 
-    const absWorkingDir = path.resolve(__dirname, '..', '..', session.working_dir as string);
+    const absWorkingDir = resolveSessionCwd(session.working_dir as string);
     const result: Record<string, unknown> = {
       ...formatSession(session),
       files,
@@ -97,7 +98,7 @@ router.get('/:id', (req: Request, res: Response) => {
     if (session.session_type === 'lean') {
       const leanMeta = db.prepare('SELECT * FROM lean_session_meta WHERE session_id = ?').get(req.params.id);
       if (leanMeta) {
-        const absProjectPath = path.resolve(__dirname, '..', '..', 'data', 'lean-projects', req.params.id as string);
+        const absProjectPath = path.join(LEAN_PROJECTS_DIR, req.params.id as string);
         result.lean_meta = { ...leanMeta as Record<string, unknown>, absolute_project_path: absProjectPath };
       }
     }
@@ -121,12 +122,14 @@ router.post('/', async (req: Request, res: Response) => {
     const id = uuidv4();
     const now = getCstTimestamp();
 
-    // Lean sessions use lean-projects directory; others use sessions
+    // Lean sessions use lean-projects directory; others use sessions.
+    // working_dir is stored relative to DATA_DIR (no "data/" prefix) so it
+    // resolves correctly whether data lives in-repo or under SUITE_DATA_ROOT.
     const isLean = session_type === 'lean';
     const workingDir = isLean
-      ? path.join('data', 'lean-projects', id)
-      : path.join('data', 'sessions', id);
-    const absWorkingDir = path.join(__dirname, '..', '..', workingDir);
+      ? path.join('lean-projects', id)
+      : path.join('sessions', id);
+    const absWorkingDir = resolveSessionCwd(workingDir);
     fs.mkdirSync(absWorkingDir, { recursive: true });
 
     db.prepare(`
@@ -266,7 +269,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     }
 
     // Delete working directory
-    const absDir = path.join(__dirname, '..', '..', session.working_dir as string);
+    const absDir = resolveSessionCwd(session.working_dir as string);
     if (fs.existsSync(absDir)) {
       fs.rmSync(absDir, { recursive: true, force: true });
     }
