@@ -157,3 +157,33 @@
 .layoutCollapsed .main {
   margin-left: var(--sidebar-width-collapsed);
 }
+
+.layoutFullscreen .main {
+  margin-left: 0;
+}
+
+.exitFullscreenBtn {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  opacity: 0.5;
+  box-shadow: var(--shadow-sm);
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.exitFullscreenBtn:hover {
+  opacity: 1;
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}

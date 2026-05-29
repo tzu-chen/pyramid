@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSession } from '../../hooks/useSession';
+import { useFullscreen } from '../../contexts/FullscreenContext';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { useCppLsp, type CppDocumentSymbol } from '../../hooks/useCppLsp';
@@ -70,6 +71,7 @@ const OCAML_SOURCE_EXTS = new Set(['ml', 'mli']);
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const { session, loading, error, refresh } = useSession(id);
+  const { fullscreen } = useFullscreen();
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [openFileIds, setOpenFileIds] = useState<string[]>([]);
@@ -1007,6 +1009,7 @@ function SessionPage() {
 
   return (
     <div className={styles.page}>
+      {!fullscreen && (
       <div className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
           <h2 className={styles.sessionTitle}>{session.title}</h2>
@@ -1142,6 +1145,7 @@ function SessionPage() {
           )}
         </div>
       </div>
+      )}
 
       {suspended && (
         <div className={styles.suspendBanner} role="status">

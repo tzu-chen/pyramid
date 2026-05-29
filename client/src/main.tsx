@@ -5,6 +5,8 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { EditorFontSizeProvider } from './contexts/EditorFontSizeContext';
 import { EditorVimModeProvider } from './contexts/EditorVimModeContext';
 import { PowerSaverProvider } from './contexts/PowerSaverContext';
+import { KeybindingsProvider } from './contexts/KeybindingsContext';
+import { FullscreenProvider } from './contexts/FullscreenContext';
 import App from './App';
 import './styles/global.css';
 
@@ -15,7 +17,11 @@ createRoot(document.getElementById('root')!).render(
         <EditorFontSizeProvider>
           <EditorVimModeProvider>
             <PowerSaverProvider>
-              <App />
+              <KeybindingsProvider>
+                <FullscreenProvider>
+                  <App />
+                </FullscreenProvider>
+              </KeybindingsProvider>
             </PowerSaverProvider>
           </EditorVimModeProvider>
         </EditorFontSizeProvider>

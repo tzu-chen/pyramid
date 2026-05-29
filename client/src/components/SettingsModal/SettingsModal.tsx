@@ -5,12 +5,72 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useEditorVimMode } from '../../contexts/EditorVimModeContext';
 import { usePowerSaver } from '../../contexts/PowerSaverContext';
+import { useKeybindings } from '../../contexts/KeybindingsContext';
+import { KEYBINDING_META, type KeybindingAction, type KeybindingsConfig } from '../../types/keybindings';
 import { editorStorage } from '../../services/editorStorage';
 import { COLOR_SCHEMES } from '../../colorSchemes';
 import styles from './SettingsModal.module.css';
 
 interface SettingsModalProps {
   onClose: () => void;
+}
+
+type Tab = 'general' | 'shortcuts';
+
+function formatKey(key: string): string {
+  if (!key) return '—';
+  if (key === ' ') return 'Space';
+  if (key.length === 1) return key.toUpperCase();
+  return key;
+}
+
+function findDuplicate(action: KeybindingAction, key: string, all: KeybindingsConfig): boolean {
+  return (Object.keys(all) as KeybindingAction[]).some(
+    other => other !== action && all[other] === key,
+  );
+}
+
+function ShortcutRow({ action, label, scope }: { action: KeybindingAction; label: string; scope: string }) {
+  const { keybindings, setKeybinding } = useKeybindings();
+  const [recording, setRecording] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        setRecording(false);
+        return;
+      }
+      if (e.key === 'Tab' || e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key.length !== 1) return;
+      setKeybinding(action, e.key.toLowerCase());
+      setRecording(false);
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [recording, action, setKeybinding]);
+
+  return (
+    <div className={styles.shortcutRow}>
+      <div className={styles.shortcutInfo}>
+        <span className={styles.shortcutLabel}>{label}</span>
+        <span className={styles.shortcutScope}>{scope}</span>
+      </div>
+      <button
+        type="button"
+        className={`${styles.keyButton} ${recording ? styles.keyButtonRecording : ''}`}
+        onClick={() => setRecording(r => !r)}
+        title={recording ? 'Press a key (Esc to cancel)' : 'Click to rebind'}
+      >
+        {recording ? 'Press a key…' : formatKey(keybindings[action])}
+      </button>
+    </div>
+  );
 }
 
 const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
@@ -26,7 +86,9 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const { fontSize, increase: fontIncrease, decrease: fontDecrease, reset: fontReset } = useEditorFontSize();
   const { vimMode, toggle: toggleVimMode } = useEditorVimMode();
   const { enabled: powerSaver, toggle: togglePowerSaver } = usePowerSaver();
+  const { keybindings, resetKeybindings } = useKeybindings();
 
+  const [tab, setTab] = useState<Tab>('general');
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -112,6 +174,22 @@ function SettingsModal({ onClose }: SettingsModalProps) {
           <button className={styles.closeBtn} onClick={onClose}>&times;</button>
         </div>
 
+        <div className={styles.tabs}>
+          <button
+            className={`${styles.tab} ${tab === 'general' ? styles.tabActive : ''}`}
+            onClick={() => setTab('general')}
+          >
+            General
+          </button>
+          <button
+            className={`${styles.tab} ${tab === 'shortcuts' ? styles.tabActive : ''}`}
+            onClick={() => setTab('shortcuts')}
+          >
+            Shortcuts
+          </button>
+        </div>
+
+        {tab === 'general' && (
         <div className={styles.body}>
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>Appearance</h3>
@@ -300,6 +378,32 @@ function SettingsModal({ onClose }: SettingsModalProps) {
             )}
           </section>
         </div>
+        )}
+
+        {tab === 'shortcuts' && (
+        <div className={styles.body}>
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Keyboard Shortcuts</h3>
+            <p className={styles.shortcutHint}>
+              Click a key to rebind. Single-character keys only; Esc cancels recording.
+              Shortcuts only fire when no input or editor is focused.
+            </p>
+            <div className={styles.shortcutList}>
+              {KEYBINDING_META.map(m => (
+                <ShortcutRow key={m.action} action={m.action} label={m.label} scope={m.scope} />
+              ))}
+            </div>
+            {KEYBINDING_META.some(m => findDuplicate(m.action, keybindings[m.action], keybindings)) && (
+              <p className={styles.shortcutWarning}>
+                Duplicate key assigned — only one action will fire.
+              </p>
+            )}
+            <button className={styles.testBtn} onClick={resetKeybindings}>
+              Reset to defaults
+            </button>
+          </section>
+        </div>
+        )}
       </div>
     </div>
   );
