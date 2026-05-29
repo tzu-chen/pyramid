@@ -115,6 +115,11 @@ export function useNotebookKernel({ sessionId, enabled, onCellEvent }: UseNotebo
       }
 
       if (msg.type === 'execute_reply' && cellId) {
+        // execute_reply (shell channel) is the authoritative "cell finished"
+        // signal. The trailing iopub `idle` status can race behind it across
+        // the bridge's two reader threads, so clear the running flag here too —
+        // otherwise the cell stays stuck "running" if idle lands first.
+        if (runningCellRef.current === cellId) runningCellRef.current = null;
         // Clean up mapping once the reply arrives
         msgIdToCellRef.current.delete(parentId);
       }

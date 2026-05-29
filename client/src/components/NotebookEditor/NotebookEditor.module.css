@@ -108,11 +108,22 @@
   border-color: var(--color-primary);
 }
 
-/* Cell whose current source matches what was last sent to the kernel. */
-.cellUpToDate {
-  border-color: #22c55e;
-  box-shadow: 0 0 0 1px #22c55e inset;
+/* Indicator light in a code cell's top-left corner. Green = run & unmodified,
+   yellow = edited since last run, red = last run raised, muted = not run yet. */
+.runIndicator {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 6px;
+  background: var(--color-border);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08) inset;
 }
+
+.runIndicatorNone { background: var(--color-border); }
+.runIndicatorOk { background: #22c55e; }
+.runIndicatorModified { background: #eab308; }
+.runIndicatorError { background: #ef4444; }
 
 .cellHeader {
   display: flex;

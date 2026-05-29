@@ -29,6 +29,7 @@ import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
 import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
 import DebugPanel from '../../components/DebugPanel/DebugPanel';
+import ReferencePanel, { getReferenceSources } from '../../components/ReferencePanel/ReferencePanel';
 import { api } from '../../services/api';
 import type { EditorSelection } from '../../components/CodeEditor/CodeEditor';
 import {
@@ -51,8 +52,8 @@ import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../t
 import { formatBytes } from '../../utils/format';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'debug' | 'claude' | 'notes' | 'links';
-type LeanTab = 'goalState' | 'messages' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'debug' | 'reference' | 'claude' | 'notes' | 'links';
+type LeanTab = 'goalState' | 'messages' | 'reference' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
 const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
@@ -718,6 +719,13 @@ function SessionPage() {
     return debugStoppedLocation.file === activeFileAbsPath ? debugStoppedLocation.line : null;
   }, [debugStoppedLocation, activeFileAbsPath]);
 
+  // API-reference sources for this session's language. Notebooks are Python
+  // (Jupyter). Memoized so the ReferencePanel's restore effect stays stable.
+  const referenceSources = useMemo(
+    () => getReferenceSources(isNotebook ? 'python' : (session?.language ?? '')),
+    [isNotebook, session?.language],
+  );
+
   const handleExecute = async () => {
     if (!id || executing) return;
     setExecuting(true);
@@ -1323,6 +1331,14 @@ function SessionPage() {
                 >
                   Messages
                 </button>
+                {referenceSources.length > 0 && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'reference' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('reference')}
+                  >
+                    Reference
+                  </button>
+                )}
                 <button
                   className={`${styles.tab} ${activeTab === 'claude' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('claude')}
@@ -1402,6 +1418,14 @@ function SessionPage() {
                     onClick={() => setActiveTab('variables')}
                   >
                     Variables
+                  </button>
+                )}
+                {referenceSources.length > 0 && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'reference' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('reference')}
+                  >
+                    Reference
                   </button>
                 )}
                 <button
@@ -1709,6 +1733,13 @@ function SessionPage() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Reference: embedded API docs (numpy/pandas/cppreference/...) */}
+            {referenceSources.length > 0 && (
+              <div style={{ display: activeTab === 'reference' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                <ReferencePanel sessionId={id!} sources={referenceSources} />
               </div>
             )}
 

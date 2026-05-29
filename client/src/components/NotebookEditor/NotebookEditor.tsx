@@ -9,6 +9,7 @@ import { formatBytes } from '../../utils/format';
 import styles from './NotebookEditor.module.css';
 
 type CellType = 'code' | 'markdown';
+type RunState = 'none' | 'ok' | 'modified' | 'error';
 
 interface NotebookCell {
   id: string;
@@ -109,6 +110,25 @@ function statusDotClass(status: KernelStatus): string {
     case 'starting':
     case 'connecting': return styles.statusStarting;
     case 'disconnected': return styles.statusDisconnected;
+  }
+}
+
+// Indicator-light for a code cell's top-left corner.
+function runStateClass(state: RunState): string {
+  switch (state) {
+    case 'ok': return styles.runIndicatorOk;
+    case 'modified': return styles.runIndicatorModified;
+    case 'error': return styles.runIndicatorError;
+    case 'none': return styles.runIndicatorNone;
+  }
+}
+
+function runStateTitle(state: RunState): string {
+  switch (state) {
+    case 'ok': return 'Run — output is up to date';
+    case 'modified': return 'Edited since last run';
+    case 'error': return 'Last run raised an error';
+    case 'none': return 'Not run yet';
   }
 }
 
@@ -244,6 +264,10 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
           const { run_started_at: _started, ...rest } = meta;
           void _started;
           const updated: Record<string, unknown> = { ...rest };
+          // Authoritative pass/fail for this run. The iopub `error` output can be
+          // dropped if execute_reply races ahead of it, so the indicator light
+          // keys off this rather than scanning outputs.
+          updated.last_run_status = event.status === 'error' ? 'error' : 'ok';
           if (startedAt !== undefined) {
             updated.last_duration_ms = Math.max(0, Date.now() - startedAt);
           }
@@ -316,6 +340,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
                 ...(c.metadata || {}),
                 last_run_source: sourceAtRun,
                 run_started_at: startedAt,
+                last_run_status: undefined,
                 last_duration_ms: undefined,
                 last_peak_rss: undefined,
                 last_rss_delta: undefined,
@@ -695,11 +720,23 @@ function CellView(props: CellViewProps) {
   const meta = (cell.metadata || {}) as Record<string, unknown>;
   const outputsCollapsed = !!meta.collapsed;
   const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
-  const upToDate =
-    cell.cell_type === 'code' &&
-    !running &&
-    lastRunSource !== undefined &&
-    lastRunSource === cell.source;
+  const hasBeenRun = lastRunSource !== undefined;
+  // Prefer the authoritative execute_reply status; fall back to scanning
+  // outputs for notebooks saved before that field existed.
+  const hasError = meta.last_run_status === 'error'
+    || cell.outputs.some(o => o.output_type === 'error');
+  // Indicator-light state shown in the cell's top-left corner:
+  //   ok = run and source unchanged, modified = edited since last run,
+  //   error = last run raised, none = never run (or currently running).
+  // A pending edit (modified) takes precedence over a stale error.
+  const runState: RunState =
+    cell.cell_type !== 'code' || running || !hasBeenRun
+      ? 'none'
+      : lastRunSource !== cell.source
+        ? 'modified'
+        : hasError
+          ? 'error'
+          : 'ok';
   const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
   const executionMark = cell.cell_type === 'code'
@@ -733,7 +770,7 @@ function CellView(props: CellViewProps) {
   return (
     <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
       <div
-        className={`${styles.cell} ${active ? styles.cellActive : ''} ${upToDate ? styles.cellUpToDate : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
+        className={`${styles.cell} ${active ? styles.cellActive : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
         data-cell-id={cell.id}
         onClick={onFocus}
       >
@@ -746,6 +783,12 @@ function CellView(props: CellViewProps) {
             >
               <span className={`${styles.sectionChevron} ${sectionCollapsed ? styles.sectionChevronCollapsed : ''}`}>▼</span>
             </button>
+          )}
+          {cell.cell_type === 'code' && (
+            <span
+              className={`${styles.runIndicator} ${runStateClass(runState)}`}
+              title={runStateTitle(runState)}
+            />
           )}
           <span className={styles.cellLabel}>
             {headingLevel > 0 ? `H${headingLevel}` : cell.cell_type}

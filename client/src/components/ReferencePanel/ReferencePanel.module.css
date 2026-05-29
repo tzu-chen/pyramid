@@ -1,0 +1,228 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.placeholder {
+  color: var(--color-text-tertiary);
+  padding: var(--space-6);
+  text-align: center;
+  font-size: inherit;
+}
+
+/* Inner tab strip listing the open reference pages. */
+.bar {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.refTab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.refTab:hover {
+  color: var(--color-text);
+  background-color: var(--color-bg-tertiary);
+}
+
+.refTabActive {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.refTabLabel {
+  font-weight: 500;
+}
+
+.refTabClose {
+  font-size: var(--font-size-base);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.refTabClose:hover {
+  color: var(--color-danger);
+}
+
+.addTab {
+  font-weight: 700;
+  padding: var(--space-1) var(--space-3);
+}
+
+.barSpacer {
+  flex: 1;
+}
+
+.externalLink {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.externalLink:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+/* Body holds the iframes (one mounted per open page) and the picker overlay. */
+.body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+
+.frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background-color: var(--color-bg);
+}
+
+/* Shown in place of an iframe when a site refuses to be framed. */
+.card {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  text-align: center;
+  background-color: var(--color-bg);
+}
+
+.cardTitle {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cardText {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.cardBtn {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+}
+
+.cardBtn:hover {
+  background-color: var(--color-primary-hover);
+}
+
+/* Catalog picker. */
+.picker {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+  background-color: var(--color-bg);
+}
+
+.pickerTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pickerItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.pickerItem:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.pickerLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  min-width: 110px;
+}
+
+.pickerDesc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.pickerActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.openBtn {
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  border-radius: var(--radius-md);
+}
+
+.openBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.cancelBtn:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
