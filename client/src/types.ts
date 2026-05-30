@@ -86,7 +86,7 @@ export interface HeatmapEntry {
   count: number;
 }
 
-export type BackendCategory = 'language' | 'lsp' | 'build_tool' | 'kernel' | 'project_tool';
+export type BackendCategory = 'language' | 'lsp' | 'build_tool' | 'debugger' | 'kernel' | 'project_tool';
 export type BackendStatus = 'available' | 'missing' | 'error';
 
 export interface BackendInfo {

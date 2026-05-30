@@ -15,7 +15,7 @@ interface BackendDef {
   name: string;
   command: string;
   args: string[];
-  category: 'language' | 'lsp' | 'build_tool' | 'kernel' | 'project_tool';
+  category: 'language' | 'lsp' | 'build_tool' | 'debugger' | 'kernel' | 'project_tool';
   used_for: string[];
   // Capture index hint: 'stdout' | 'stderr' | 'both' (some tools print version to stderr)
   stream?: 'stdout' | 'stderr' | 'both';
@@ -90,6 +90,42 @@ const BACKENDS: BackendDef[] = [
     args: ['--version'],
     category: 'build_tool',
     used_for: ['Preferred CMake generator (auto-detected)'],
+    versionRegex: /([\d.]+)/,
+  },
+  {
+    key: 'ocaml',
+    name: 'OCaml',
+    command: 'ocaml',
+    args: ['--version'],
+    category: 'language',
+    used_for: ['Freeform OCaml sessions', 'OCaml single-file execution'],
+    versionRegex: /version\s+([\d.]+)/i,
+  },
+  {
+    key: 'ocamllsp',
+    name: 'OCaml LSP',
+    command: 'ocamllsp',
+    args: ['--version'],
+    category: 'lsp',
+    used_for: ['OCaml language server (diagnostics, hover, completion, formatting)'],
+    versionRegex: /([\d.]+)/,
+  },
+  {
+    key: 'dune',
+    name: 'Dune',
+    command: 'dune',
+    args: ['--version'],
+    category: 'build_tool',
+    used_for: ['OCaml project configure, build, and run pipeline'],
+    versionRegex: /([\d.]+)/,
+  },
+  {
+    key: 'ocamlearlybird',
+    name: 'OCaml earlybird',
+    command: 'ocamlearlybird',
+    args: ['--version'],
+    category: 'debugger',
+    used_for: ['OCaml bytecode debugger (DAP-backed Debug panel)'],
     versionRegex: /([\d.]+)/,
   },
   {

@@ -16,11 +16,12 @@ const CATEGORY_LABELS: Record<BackendCategory, string> = {
   language: 'Languages',
   lsp: 'Language Servers',
   build_tool: 'Build Tools',
+  debugger: 'Debuggers',
   kernel: 'Kernels',
   project_tool: 'Project Tools',
 };
 
-const CATEGORY_ORDER: BackendCategory[] = ['language', 'lsp', 'build_tool', 'kernel', 'project_tool'];
+const CATEGORY_ORDER: BackendCategory[] = ['language', 'lsp', 'build_tool', 'debugger', 'kernel', 'project_tool'];
 
 function StatusDot({ status }: { status: BackendInfo['status'] }) {
   return <span className={`${styles.dot} ${styles[`dot_${status}`]}`} title={status} />;
@@ -140,7 +141,7 @@ function InfoPage() {
     if (!acc[b.category]) acc[b.category] = [];
     acc[b.category].push(b);
     return acc;
-  }, { language: [], lsp: [], build_tool: [], kernel: [], project_tool: [] });
+  }, { language: [], lsp: [], build_tool: [], debugger: [], kernel: [], project_tool: [] });
 
   const availableCount = data?.backends.filter(b => b.status === 'available').length ?? 0;
   const missingCount = data?.backends.filter(b => b.status === 'missing').length ?? 0;
