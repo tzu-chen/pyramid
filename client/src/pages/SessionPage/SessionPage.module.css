@@ -236,6 +236,44 @@
   min-width: 0;
 }
 
+/* Hide button at the right end of the tab strip */
+.panelCollapseBtn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.panelCollapseBtn:hover {
+  color: var(--color-text);
+}
+
+/* Thin rail that brings the panel back when it's hidden */
+.panelExpandBtn {
+  width: 22px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: var(--space-2);
+  background: var(--color-bg-secondary);
+  border: none;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.panelExpandBtn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+}
+
 .rightPaneTop {
   flex: 1 1 auto;
   display: flex;

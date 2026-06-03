@@ -30,6 +30,8 @@ import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
 import DebugPanel from '../../components/DebugPanel/DebugPanel';
 import ReferencePanel, { getReferenceSources } from '../../components/ReferencePanel/ReferencePanel';
+import { ChevronLeftIcon, ChevronRightIcon } from '../../components/Icons/Icons';
+import { useKeyboardShortcut } from '../../hooks/useKeyboardShortcut';
 import { api } from '../../services/api';
 import type { EditorSelection } from '../../components/CodeEditor/CodeEditor';
 import {
@@ -59,6 +61,7 @@ const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
 const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
 const DUNE_PROFILE_KEY = 'pyramid_dune_profile';
 const DUNE_TARGET_KEY = 'pyramid_dune_target';
+const PANEL_COLLAPSED_KEY = 'pyramid_panel_collapsed';
 
 // Files clangd should syntax-check. Anything else (CMakeLists.txt, *.txt,
 // *.md, ...) must not be opened in clangd or surface clangd diagnostics, even
@@ -106,6 +109,16 @@ function SessionPage() {
     minRatio: 0.25,
     maxRatio: 0.8,
   });
+
+  // Hide/show the right side panel (tabs + terminal). Persisted so it sticks
+  // across reloads, mirroring the sidebar collapse in Layout.
+  const [panelCollapsed, setPanelCollapsed] = useState<boolean>(
+    () => localStorage.getItem(PANEL_COLLAPSED_KEY) === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem(PANEL_COLLAPSED_KEY, panelCollapsed ? '1' : '0');
+  }, [panelCollapsed]);
+  useKeyboardShortcut('togglePanel', useCallback(() => setPanelCollapsed(c => !c), []));
 
   // Vertical split inside the right pane (freeform only): tabs/output on top, terminal on bottom
   const {
@@ -1163,7 +1176,10 @@ function SessionPage() {
       )}
 
       <div className={styles.workbench} ref={containerRef}>
-        <div className={styles.editorPane} style={{ flexBasis: `${ratio * 100}%` }}>
+        <div
+          className={styles.editorPane}
+          style={panelCollapsed ? { flex: 1 } : { flexBasis: `${ratio * 100}%` }}
+        >
           {isNotebook && activeFileId ? (
             <div className={styles.editorWithTree}>
               {!notebookTreeCollapsed && (
@@ -1302,6 +1318,17 @@ function SessionPage() {
           )}
         </div>
 
+        {panelCollapsed ? (
+          <button
+            className={styles.panelExpandBtn}
+            onClick={() => setPanelCollapsed(false)}
+            title="Show panel (p)"
+            aria-label="Show panel"
+          >
+            <ChevronLeftIcon size={16} />
+          </button>
+        ) : (
+        <>
         <div
           className={styles.divider}
           onMouseDown={onDragStart}
@@ -1448,6 +1475,14 @@ function SessionPage() {
                 </button>
               </>
             )}
+            <button
+              className={styles.panelCollapseBtn}
+              onClick={() => setPanelCollapsed(true)}
+              title="Hide panel (p)"
+              aria-label="Hide panel"
+            >
+              <ChevronRightIcon size={14} />
+            </button>
           </div>
 
           <div className={styles.tabContent}>
@@ -1802,6 +1837,8 @@ function SessionPage() {
             </>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
