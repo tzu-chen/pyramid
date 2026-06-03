@@ -3,6 +3,7 @@ const VIM_MODE_KEY = 'pyramid_editor_vim_mode';
 const POWER_SAVER_KEY = 'pyramid_power_saver';
 const NOTEBOOK_LINE_NUMBERS_KEY = 'pyramid_notebook_line_numbers';
 const NOTEBOOK_CELL_NUMBERS_KEY = 'pyramid_notebook_cell_numbers';
+const NOTEBOOK_CELL_HEADERS_KEY = 'pyramid_notebook_cell_headers';
 const DEFAULT_FONT_SIZE = 13;
 const MIN_FONT_SIZE = 10;
 const MAX_FONT_SIZE = 24;
@@ -80,6 +81,21 @@ export const editorStorage = {
   saveNotebookCellNumbers(enabled: boolean): void {
     try {
       localStorage.setItem(NOTEBOOK_CELL_NUMBERS_KEY, enabled ? '1' : '0');
+    } catch { /* localStorage unavailable */ }
+  },
+
+  // Notebook cell headers (the per-cell strip with type/timing/actions) default
+  // ON; absent key is treated as enabled.
+  getNotebookCellHeaders(): boolean {
+    try {
+      return localStorage.getItem(NOTEBOOK_CELL_HEADERS_KEY) !== '0';
+    } catch { /* localStorage unavailable */ }
+    return true;
+  },
+
+  saveNotebookCellHeaders(enabled: boolean): void {
+    try {
+      localStorage.setItem(NOTEBOOK_CELL_HEADERS_KEY, enabled ? '1' : '0');
     } catch { /* localStorage unavailable */ }
   },
 

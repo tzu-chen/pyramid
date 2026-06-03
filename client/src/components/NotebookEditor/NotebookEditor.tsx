@@ -170,13 +170,24 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
+  // Which markdown cell (if any) is currently in edit mode. Lifted out of
+  // CellView so command-mode keys (Enter to edit) can drive it.
+  const [editingCellId, setEditingCellId] = useState<string | null>(null);
   const [showLineNumbers, setShowLineNumbers] = useState(() => editorStorage.getNotebookLineNumbers());
   const [showCellNumbers, setShowCellNumbers] = useState(() => editorStorage.getNotebookCellNumbers());
+  const [showCellHeaders, setShowCellHeaders] = useState(() => editorStorage.getNotebookCellHeaders());
   const notebookDataRef = useRef<Notebook | null>(null);
   notebookDataRef.current = notebook;
   const notebookRef = useRef<HTMLDivElement>(null);
   const lastDPressRef = useRef<number>(0);
+  // Cell to focus its editor after the next render (edit mode lands here).
   const pendingFocusRef = useRef<string | null>(null);
+  // Bumped whenever pendingFocusRef is set, so the focus effect fires even when
+  // advancing to an existing cell leaves the notebook object unchanged.
+  const [focusNonce, setFocusNonce] = useState(0);
+  // Cell to select + scroll into view after the next render (stays in command
+  // mode — used when inserting via a/b so the new cell is visibly focused).
+  const pendingSelectRef = useRef<string | null>(null);
 
   // Load notebook from disk when fileId changes
   useEffect(() => {
@@ -187,6 +198,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
       setNotebook(parsed);
       setLoadedFileId(fileId);
       setActiveCellId(parsed.cells[0]?.id || null);
+      setEditingCellId(null);
     }).catch(() => {
       if (!cancelled) {
         setNotebook(emptyNotebook());
@@ -368,6 +380,14 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     });
   }, []);
 
+  const toggleCellHeaders = useCallback(() => {
+    setShowCellHeaders(prev => {
+      const next = !prev;
+      editorStorage.saveNotebookCellHeaders(next);
+      return next;
+    });
+  }, []);
+
   const runAll = useCallback(() => {
     const nb = notebookDataRef.current;
     if (!nb) return;
@@ -387,17 +407,36 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
   }, []);
 
   const insertCellAt = useCallback((index: number, type: CellType) => {
+    const newCell: NotebookCell = { id: newId(), cell_type: type, source: '', outputs: [], execution_count: null };
     setNotebook(prev => {
       if (!prev) return prev;
-      const newCell: NotebookCell = { id: newId(), cell_type: type, source: '', outputs: [], execution_count: null };
       const next = [...prev.cells];
       next.splice(index, 0, newCell);
-      setActiveCellId(newCell.id);
       return { ...prev, cells: next };
     });
+    // Land on the new cell in command mode and scroll it into view, so a/b
+    // always visibly focus the cell they just created.
+    setActiveCellId(newCell.id);
+    setEditingCellId(null);
+    pendingSelectRef.current = newCell.id;
+  }, []);
+
+  // Put a markdown cell into edit mode (and select it). For code cells edit
+  // mode is just editor focus, handled via focusActiveCellEditor.
+  const startEditCell = useCallback((cellId: string) => {
+    setActiveCellId(cellId);
+    setEditingCellId(cellId);
+    // Focus the markdown textarea once it mounts (in addition to its autoFocus).
+    pendingFocusRef.current = cellId;
+    setFocusNonce(n => n + 1);
+  }, []);
+
+  const stopEditCell = useCallback((cellId: string) => {
+    setEditingCellId(prev => (prev === cellId ? null : prev));
   }, []);
 
   const deleteCell = useCallback((cellId: string) => {
+    setEditingCellId(prev => (prev === cellId ? null : prev));
     setNotebook(prev => {
       if (!prev) return prev;
       const next = prev.cells.filter(c => c.id !== cellId);
@@ -469,41 +508,64 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     });
   }, []);
 
-  const focusActiveCellEditor = useCallback((cellId: string) => {
+  // Focus a cell's editor (CodeMirror for code, textarea for editing markdown).
+  // Returns false when the cell has no editor to focus (e.g. rendered markdown),
+  // so callers can fall back to command-mode (root) focus.
+  const focusActiveCellEditor = useCallback((cellId: string): boolean => {
     const root = notebookRef.current;
-    if (!root) return;
+    if (!root) return false;
     const cellEl = root.querySelector(`[data-cell-id="${cellId}"]`);
-    if (!cellEl) return;
+    if (!cellEl) return false;
     const cm = cellEl.querySelector<HTMLElement>('.cm-content');
-    if (cm) { cm.focus(); return; }
+    if (cm) { cm.focus(); return true; }
     const ta = cellEl.querySelector<HTMLTextAreaElement>('textarea');
-    if (ta) ta.focus();
+    if (ta) { ta.focus(); return true; }
+    return false;
   }, []);
 
   const advanceFromCell = useCallback((cellId: string) => {
-    setNotebook(prev => {
-      if (!prev) return prev;
-      const idx = prev.cells.findIndex(c => c.id === cellId);
-      if (idx === -1) return prev;
-      if (idx + 1 < prev.cells.length) {
-        const nextId = prev.cells[idx + 1].id;
-        setActiveCellId(nextId);
-        pendingFocusRef.current = nextId;
-        return prev;
-      }
-      const newCell: NotebookCell = { id: newId(), cell_type: 'code', source: '', outputs: [], execution_count: null };
-      setActiveCellId(newCell.id);
-      pendingFocusRef.current = newCell.id;
-      return { ...prev, cells: [...prev.cells, newCell] };
-    });
+    const nb = notebookDataRef.current;
+    if (!nb) return;
+    const idx = nb.cells.findIndex(c => c.id === cellId);
+    if (idx === -1) return;
+    setEditingCellId(null);
+    if (idx + 1 < nb.cells.length) {
+      const nextId = nb.cells[idx + 1].id;
+      setActiveCellId(nextId);
+      pendingFocusRef.current = nextId;
+      setFocusNonce(n => n + 1);
+      return;
+    }
+    // Past the end — append a fresh code cell and land in it.
+    const newCell: NotebookCell = { id: newId(), cell_type: 'code', source: '', outputs: [], execution_count: null };
+    setActiveCellId(newCell.id);
+    pendingFocusRef.current = newCell.id;
+    setFocusNonce(n => n + 1);
+    setNotebook(prev => (prev ? { ...prev, cells: [...prev.cells, newCell] } : prev));
   }, []);
 
   useEffect(() => {
     const id = pendingFocusRef.current;
     if (!id) return;
     pendingFocusRef.current = null;
-    requestAnimationFrame(() => focusActiveCellEditor(id));
-  }, [notebook, focusActiveCellEditor]);
+    requestAnimationFrame(() => {
+      // If the target cell has no editor (rendered markdown), fall back to
+      // command-mode focus on the notebook root so navigation keeps working.
+      if (!focusActiveCellEditor(id)) notebookRef.current?.focus({ preventScroll: true });
+    });
+  }, [notebook, focusNonce, focusActiveCellEditor]);
+
+  // Select + scroll-to a cell without entering edit mode (a/b inserts).
+  useEffect(() => {
+    const id = pendingSelectRef.current;
+    if (!id) return;
+    pendingSelectRef.current = null;
+    requestAnimationFrame(() => {
+      const root = notebookRef.current;
+      root?.querySelector(`[data-cell-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+      root?.focus({ preventScroll: true });
+    });
+  }, [notebook]);
 
   // Compute which cells are hidden by collapsed markdown-heading sections.
   // A section starts at a heading cell with level N and contains all subsequent
@@ -591,12 +653,26 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         }
         break;
       }
-      case 'Enter':
-        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      case 'Enter': {
+        const cell = nb.cells[idx];
+        if (e.shiftKey) {
+          // Run (if code) and always advance to the next cell — same behavior
+          // from command mode whether the current cell is code or markdown.
           e.preventDefault();
-          focusActiveCellEditor(activeCellId);
+          if (cell.cell_type === 'code') runCell(cell.id);
+          advanceFromCell(cell.id);
+        } else if (!e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          // Enter the focused cell's edit mode. Markdown needs its editor
+          // mounted (it renders by default), so flip editing state for it.
+          if (cell.cell_type === 'markdown') {
+            startEditCell(cell.id);
+          } else {
+            focusActiveCellEditor(cell.id);
+          }
         }
         break;
+      }
       case 'd': {
         const now = Date.now();
         if (lastDPressRef.current && now - lastDPressRef.current < 600) {
@@ -611,7 +687,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
         break;
       }
     }
-  }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor, hiddenCells]);
+  }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor, hiddenCells, runCell, advanceFromCell, startEditCell]);
 
   if (!notebook) {
     return <div className={styles.notebook}><div className={styles.toolbar}>Loading notebook...</div></div>;
@@ -634,6 +710,13 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
           title={showLineNumbers ? 'Hide line numbers in all cells' : 'Show line numbers in all cells'}
         >
           # Lines
+        </button>
+        <button
+          onClick={toggleCellHeaders}
+          className={showCellHeaders ? styles.toggleActive : ''}
+          title={showCellHeaders ? 'Hide cell headers (type / timing / actions strip)' : 'Show cell headers (type / timing / actions strip)'}
+        >
+          Headers
         </button>
         <button
           onClick={toggleCellNumbers}
@@ -661,7 +744,9 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               cell={cell}
               showCellNumber={showCellNumbers}
               showLineNumbers={showLineNumbers}
+              showHeader={showCellHeaders}
               active={cell.id === activeCellId}
+              editing={cell.id === editingCellId}
               running={kernel.runningCellId === cell.id}
               kernelIdle={kernel.status === 'idle' || kernel.status === 'busy'}
               fontSize={fontSize}
@@ -670,6 +755,8 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               hiddenInSection={hiddenInSection}
               halfWidth={halfWidth}
               onFocus={() => setActiveCellId(cell.id)}
+              onStartEdit={() => startEditCell(cell.id)}
+              onStopEdit={() => stopEditCell(cell.id)}
               onChange={(src) => updateCellSource(cell.id, src)}
               onRun={() => runCell(cell.id)}
               onAdvance={() => advanceFromCell(cell.id)}
@@ -693,7 +780,9 @@ interface CellViewProps {
   cell: NotebookCell;
   showCellNumber: boolean;
   showLineNumbers: boolean;
+  showHeader: boolean;
   active: boolean;
+  editing: boolean;
   running: boolean;
   kernelIdle: boolean;
   fontSize: number;
@@ -702,6 +791,8 @@ interface CellViewProps {
   hiddenInSection: number;
   halfWidth: boolean;
   onFocus: () => void;
+  onStartEdit: () => void;
+  onStopEdit: () => void;
   onChange: (src: string) => void;
   onRun: () => void;
   onAdvance: () => void;
@@ -716,7 +807,7 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, showCellNumber, showLineNumbers, active, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
+  const { cell, showCellNumber, showLineNumbers, showHeader, active, editing, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onStartEdit, onStopEdit, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
   const meta = (cell.metadata || {}) as Record<string, unknown>;
   const outputsCollapsed = !!meta.collapsed;
   const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
@@ -737,7 +828,6 @@ function CellView(props: CellViewProps) {
         : hasError
           ? 'error'
           : 'ok';
-  const [mdEditing, setMdEditing] = useState(cell.source === '' && cell.cell_type === 'markdown');
 
   const executionMark = cell.cell_type === 'code'
     ? (running ? '[*]' : cell.execution_count != null ? `[${cell.execution_count}]` : '[ ]')
@@ -774,6 +864,7 @@ function CellView(props: CellViewProps) {
         data-cell-id={cell.id}
         onClick={onFocus}
       >
+        {showHeader && (
         <div className={styles.cellHeader}>
           {headingLevel > 0 && onToggleSection && (
             <button
@@ -828,6 +919,7 @@ function CellView(props: CellViewProps) {
             <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete cell">×</button>
           </div>
         </div>
+        )}
         <div className={styles.cellBody}>
           {cell.cell_type === 'code' && showCellNumber && (
             <div className={styles.executionGutter}>{executionMark}</div>
@@ -855,16 +947,17 @@ function CellView(props: CellViewProps) {
                   hideSearchBar
                 />
               </div>
-            ) : mdEditing ? (
+            ) : editing ? (
               <textarea
                 className={styles.markdownTextarea}
                 value={cell.source}
                 onChange={(e) => onChange(e.target.value)}
-                onBlur={() => setMdEditing(false)}
+                onBlur={onStopEdit}
                 onKeyDown={(e) => {
                   if (e.shiftKey && e.key === 'Enter') {
                     e.preventDefault();
-                    setMdEditing(false);
+                    e.stopPropagation();
+                    onStopEdit();
                     onAdvance();
                   }
                 }}
@@ -872,7 +965,7 @@ function CellView(props: CellViewProps) {
                 autoFocus
               />
             ) : (
-              <div className={styles.markdownArea} onClick={(e) => { e.stopPropagation(); setMdEditing(true); }}>
+              <div className={styles.markdownArea} onClick={(e) => { e.stopPropagation(); onStartEdit(); }}>
                 {cell.source.trim()
                   ? <MarkdownRenderer content={cell.source} />
                   : <span className={styles.markdownPlaceholder}>Click to edit markdown...</span>}
