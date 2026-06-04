@@ -64,6 +64,30 @@
   color: var(--color-text-secondary);
 }
 
+/* Command/Edit mode pill — a persistent, easy-to-find indicator of which mode
+   keystrokes go to. Colors mirror the active cell's accent (blue = command,
+   green = edit). */
+.modePill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.modeCommand {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.modeEdit {
+  background: var(--color-success-light);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
 .cellList {
   flex: 1;
   overflow-y: auto;
@@ -104,8 +128,21 @@
   flex-shrink: 0;
 }
 
+/* Selected cell: stronger primary outline plus a soft halo so the active cell
+   is obvious at a glance. An outer box-shadow (not an inset/left bar) is used
+   because the header/body have their own backgrounds that would paint over an
+   inset accent. */
 .cellActive {
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary), 0 0 0 4px rgba(66, 99, 235, 0.18);
+}
+
+/* Edit mode (cursor is in this cell's editor): switch the accent from blue to
+   green so command mode vs edit mode is obvious at a glance. Defined after
+   .cellActive so it wins the shared box-shadow / border-color. */
+.cellEditing {
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 1px var(--color-success), 0 0 0 4px rgba(43, 138, 62, 0.2);
 }
 
 /* Indicator light in a code cell's top-left corner. Green = run & unmodified,

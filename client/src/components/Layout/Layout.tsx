@@ -33,15 +33,9 @@ function Layout({ children }: LayoutProps) {
   useKeyboardShortcut('toggleFullscreen', toggleFullscreen);
   useKeyboardShortcut('toggleSidebar', useCallback(() => setCollapsed(c => !c), []));
 
-  // Escape always restores chrome, so fullscreen is never a trap.
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFullscreen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen, setFullscreen]);
+  // Note: Esc deliberately does NOT exit fullscreen — it would collide with
+  // notebook cell navigation (Esc to leave the editor). Use the F shortcut
+  // (toggleFullscreen) or the on-screen exit button instead.
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `${styles.navLink} ${isActive ? styles.active : ''}`;
@@ -99,7 +93,7 @@ function Layout({ children }: LayoutProps) {
         <button
           className={styles.exitFullscreenBtn}
           onClick={() => setFullscreen(false)}
-          title="Exit fullscreen (Esc)"
+          title="Exit fullscreen (F)"
           aria-label="Exit fullscreen"
         >
           <MinimizeIcon size={16} />

@@ -173,6 +173,12 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
   // Which markdown cell (if any) is currently in edit mode. Lifted out of
   // CellView so command-mode keys (Enter to edit) can drive it.
   const [editingCellId, setEditingCellId] = useState<string | null>(null);
+  // True when focus is inside a cell's editor (CodeMirror or markdown textarea)
+  // — i.e. edit mode. False when focus is on the notebook root / a selected but
+  // unfocused cell — i.e. command (selection) mode. Drives the active cell's
+  // accent color and the toolbar mode pill so the current mode is obvious
+  // without hunting for a text cursor.
+  const [editMode, setEditMode] = useState(false);
   const [showLineNumbers, setShowLineNumbers] = useState(() => editorStorage.getNotebookLineNumbers());
   const [showCellNumbers, setShowCellNumbers] = useState(() => editorStorage.getNotebookCellNumbers());
   const [showCellHeaders, setShowCellHeaders] = useState(() => editorStorage.getNotebookCellHeaders());
@@ -567,6 +573,19 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     });
   }, [notebook]);
 
+  // Keep the selected cell visible. Whenever the active cell changes (j/k or
+  // arrow navigation in command mode, clicking a partly-offscreen cell, etc.)
+  // scroll it into view. `block: 'nearest'` is a no-op when the cell is already
+  // fully visible, so it only scrolls when the selection moves out of view.
+  useEffect(() => {
+    if (!activeCellId) return;
+    requestAnimationFrame(() => {
+      notebookRef.current
+        ?.querySelector(`[data-cell-id="${activeCellId}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
+    });
+  }, [activeCellId]);
+
   // Compute which cells are hidden by collapsed markdown-heading sections.
   // A section starts at a heading cell with level N and contains all subsequent
   // cells until the next heading of level ≤ N. Collapsing that heading hides
@@ -689,6 +708,20 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
     }
   }, [activeCellId, insertCellAt, changeCellType, deleteCell, focusActiveCellEditor, hiddenCells, runCell, advanceFromCell, startEditCell]);
 
+  // Recompute command/edit mode whenever focus moves within the notebook.
+  // React's onFocus/onBlur bubble, so a single handler on the root catches focus
+  // entering/leaving any cell editor. The rAF defers until document.activeElement
+  // has settled (it's transiently null between blur and the next focus).
+  const handleFocusChange = useCallback(() => {
+    requestAnimationFrame(() => {
+      const root = notebookRef.current;
+      const el = document.activeElement as HTMLElement | null;
+      const inEditor = !!el && !!root && root.contains(el)
+        && (!!el.closest('.cm-editor') || el.tagName === 'TEXTAREA');
+      setEditMode(inEditor);
+    });
+  }, []);
+
   if (!notebook) {
     return <div className={styles.notebook}><div className={styles.toolbar}>Loading notebook...</div></div>;
   }
@@ -699,10 +732,20 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
       ref={notebookRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      onFocus={handleFocusChange}
+      onBlur={handleFocusChange}
     >
       <div className={styles.toolbar}>
         <span className={`${styles.statusDot} ${statusDotClass(kernel.status)}`} />
         <span className={styles.statusLabel}>{statusLabel(kernel.status)}</span>
+        <span
+          className={`${styles.modePill} ${editMode ? styles.modeEdit : styles.modeCommand}`}
+          title={editMode
+            ? 'Edit mode — typing goes into the focused cell. Press Esc for command mode.'
+            : 'Command mode — j/k to move, Enter to edit a cell.'}
+        >
+          {editMode ? 'Edit' : 'Command'}
+        </span>
         <div style={{ flex: 1 }} />
         <button
           onClick={toggleLineNumbers}
@@ -746,6 +789,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               showLineNumbers={showLineNumbers}
               showHeader={showCellHeaders}
               active={cell.id === activeCellId}
+              editFocused={cell.id === activeCellId && editMode}
               editing={cell.id === editingCellId}
               running={kernel.runningCellId === cell.id}
               kernelIdle={kernel.status === 'idle' || kernel.status === 'busy'}
@@ -782,6 +826,7 @@ interface CellViewProps {
   showLineNumbers: boolean;
   showHeader: boolean;
   active: boolean;
+  editFocused: boolean;
   editing: boolean;
   running: boolean;
   kernelIdle: boolean;
@@ -807,7 +852,7 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, showCellNumber, showLineNumbers, showHeader, active, editing, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onStartEdit, onStopEdit, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
+  const { cell, showCellNumber, showLineNumbers, showHeader, active, editFocused, editing, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onStartEdit, onStopEdit, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
   const meta = (cell.metadata || {}) as Record<string, unknown>;
   const outputsCollapsed = !!meta.collapsed;
   const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
@@ -860,7 +905,7 @@ function CellView(props: CellViewProps) {
   return (
     <div className={`${styles.cellWrapper} ${halfWidth ? styles.cellWrapperHalf : ''}`}>
       <div
-        className={`${styles.cell} ${active ? styles.cellActive : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
+        className={`${styles.cell} ${active ? styles.cellActive : ''} ${editFocused ? styles.cellEditing : ''} ${headingLevel > 0 ? styles[`headingLevel${headingLevel}`] : ''}`}
         data-cell-id={cell.id}
         onClick={onFocus}
       >
