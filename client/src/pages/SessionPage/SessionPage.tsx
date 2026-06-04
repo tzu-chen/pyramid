@@ -20,6 +20,7 @@ import SymbolPalette from '../../components/SymbolPalette/SymbolPalette';
 import Badge from '../../components/Badge/Badge';
 import FileTree from '../../components/FileTree/FileTree';
 import FileTabs from '../../components/FileTabs/FileTabs';
+import WelcomeScreen from '../../components/WelcomeScreen/WelcomeScreen';
 import NotebookEditor from '../../components/NotebookEditor/NotebookEditor';
 import VariableInspector from '../../components/VariableInspector/VariableInspector';
 import CsvViewer from '../../components/CsvViewer/CsvViewer';
@@ -49,6 +50,7 @@ import {
   type DuneProfile,
 } from '../../services/duneBuildService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
+import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
 import { formatBytes } from '../../utils/format';
@@ -238,34 +240,67 @@ function SessionPage() {
     return `file://${session.working_dir.startsWith('/') ? '' : '/'}${session.working_dir}/${filename}`;
   }, [session]);
 
-  // Load first file when session loads
+  // Restore session state (notes, runs, default tab, and open file tabs) when
+  // the session loads or we navigate between sessions.
   useEffect(() => {
-    if (session?.files && session.files.length > 0) {
-      const primary = session.files.find(f => f.is_primary) || session.files[0];
+    if (!session) return;
+    setNotes(session.notes);
+    prevNotesRef.current = session.notes;
+    setRuns(session.runs || []);
+
+    // Set default tab based on session type
+    if (session.session_type === 'lean') {
+      setActiveTab('goalState');
+    } else if (session.session_type === 'notebook') {
+      setActiveTab('claude');
+    } else {
+      setActiveTab('output');
+    }
+
+    // Load lean metadata
+    if (session.lean_meta) {
+      setLakeStatus(session.lean_meta.lake_status);
+      setBuildOutput(session.lean_meta.last_build_output);
+    }
+
+    // Reopen the tabs that were open last time, dropping any whose file has
+    // since been deleted. On first visit (no persisted record) fall back to the
+    // primary file; Lean has no file tree, so it auto-opens all files. An empty
+    // persisted record is honored — the session reopens to the welcome screen.
+    const files = session.files ?? [];
+    const existing = new Set(files.map(f => f.id));
+    const persisted = editorStorage.getOpenFiles(session.id);
+    if (persisted) {
+      const restoredOpen = persisted.openFileIds.filter(fid => existing.has(fid));
+      const restoredActive =
+        persisted.activeFileId && existing.has(persisted.activeFileId)
+          ? persisted.activeFileId
+          : (restoredOpen[0] ?? null);
+      setOpenFileIds(restoredOpen);
+      setActiveFileId(restoredActive);
+    } else if (files.length > 0) {
+      const primary = files.find(f => f.is_primary) || files[0];
       setActiveFileId(primary.id);
-      // Lean sessions have no file tree, so the tab strip is the only way to
-      // switch files — auto-open all of them. Other types open files on click.
-      setOpenFileIds(session.session_type === 'lean' ? session.files.map(f => f.id) : [primary.id]);
-      setNotes(session.notes);
-      prevNotesRef.current = session.notes;
-      setRuns(session.runs || []);
-
-      // Set default tab based on session type
-      if (session.session_type === 'lean') {
-        setActiveTab('goalState');
-      } else if (session.session_type === 'notebook') {
-        setActiveTab('claude');
-      } else {
-        setActiveTab('output');
-      }
-
-      // Load lean metadata
-      if (session.lean_meta) {
-        setLakeStatus(session.lean_meta.lake_status);
-        setBuildOutput(session.lean_meta.last_build_output);
-      }
+      setOpenFileIds(session.session_type === 'lean' ? files.map(f => f.id) : [primary.id]);
+    } else {
+      setOpenFileIds([]);
+      setActiveFileId(null);
     }
   }, [session?.id]);
+
+  // Persist open tabs + active tab per session so reopening restores them.
+  // Skipped on the first render after a session loads: openFileIds/activeFileId
+  // still reflect the previous session until the restore effect above flushes,
+  // and persisting then would clobber this session's saved state.
+  const persistedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session?.id) return;
+    if (persistedSessionRef.current !== session.id) {
+      persistedSessionRef.current = session.id;
+      return;
+    }
+    editorStorage.saveOpenFiles(session.id, { openFileIds, activeFileId });
+  }, [session?.id, openFileIds, activeFileId]);
 
   // Open a file as a tab. If already open, just activate it; otherwise append.
   const openFile = useCallback((fileId: string) => {
@@ -312,6 +347,10 @@ function SessionPage() {
           requestAnimationFrame(() => onJumpRef.current?.(pending.line, pending.column));
         }
       }).catch(() => {});
+    } else {
+      // No file open (all tabs closed) — clear stale content so panels that read
+      // it (Claude, Asm) don't reference a file that's no longer showing.
+      setFileContent('');
     }
   }, [id, activeFileId]);
 
@@ -1180,7 +1219,7 @@ function SessionPage() {
           className={styles.editorPane}
           style={panelCollapsed ? { flex: 1 } : { flexBasis: `${ratio * 100}%` }}
         >
-          {isNotebook && activeFileId ? (
+          {isNotebook ? (
             <div className={styles.editorWithTree}>
               {!notebookTreeCollapsed && (
                 <div className={styles.fileTreePanel}>
@@ -1221,7 +1260,9 @@ function SessionPage() {
                   onClose={closeFile}
                 />
                 <div className={styles.editorBody}>
-                  {activeFileExt === 'ipynb' ? (
+                  {!activeFileId ? (
+                    <WelcomeScreen files={session.files} onOpenFile={openFile} />
+                  ) : activeFileExt === 'ipynb' ? (
                     <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} />
                   ) : activeFileExt === 'csv' ? (
                     <CsvViewer sessionId={id!} fileId={activeFileId} />
@@ -1249,15 +1290,19 @@ function SessionPage() {
               <SymbolPalette onInsert={(s) => insertRef.current?.(s)} />
               <div className={styles.editorContainer}>
                 <div className={styles.editorBody}>
-                  <CodeEditor
-                    value={fileContent}
-                    language={session.language}
-                    onChange={handleSaveFile}
-                    onCursorChange={handleCursorChange}
-                    diagnostics={lsp.diagnostics}
-                    fontSize={fontSize}
-                    onInsertRef={insertRef}
-                  />
+                  {!activeFileId ? (
+                    <WelcomeScreen files={session.files} onOpenFile={openFile} />
+                  ) : (
+                    <CodeEditor
+                      value={fileContent}
+                      language={session.language}
+                      onChange={handleSaveFile}
+                      onCursorChange={handleCursorChange}
+                      diagnostics={lsp.diagnostics}
+                      fontSize={fontSize}
+                      onInsertRef={insertRef}
+                    />
+                  )}
                 </div>
               </div>
             </>
@@ -1282,36 +1327,40 @@ function SessionPage() {
                   onClose={closeFile}
                 />
                 <div className={styles.editorBody}>
-                  <CodeEditor
-                    value={fileContent}
-                    language={session.language}
-                    onChange={handleSaveFile}
-                    onCursorChange={activeFileIsCpp || activeFileIsOcaml ? handleCursorChange : undefined}
-                    diagnostics={
-                      activeFileIsCpp ? cppLsp.diagnostics
-                      : activeFileIsOcaml ? ocamlLsp.diagnostics
-                      : undefined
-                    }
-                    externalCompletion={
-                      activeFileIsCpp ? cppExternalCompletion
-                      : activeFileIsOcaml ? ocamlExternalCompletion
-                      : undefined
-                    }
-                    externalHover={
-                      activeFileIsCpp ? cppExternalHover
-                      : activeFileIsOcaml ? ocamlExternalHover
-                      : undefined
-                    }
-                    fontSize={fontSize}
-                    onInsertRef={insertRef}
-                    onJumpRef={onJumpRef}
-                    onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
-                    setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}
-                    showBreakpointGutter={activeFileIsOcaml && isDuneProject}
-                    breakpoints={activeFileBreakpoints}
-                    onBreakpointToggle={handleBreakpointToggle}
-                    debugStoppedLine={activeFileStoppedLine}
-                  />
+                  {!activeFileId ? (
+                    <WelcomeScreen files={session.files} onOpenFile={openFile} />
+                  ) : (
+                    <CodeEditor
+                      value={fileContent}
+                      language={session.language}
+                      onChange={handleSaveFile}
+                      onCursorChange={activeFileIsCpp || activeFileIsOcaml ? handleCursorChange : undefined}
+                      diagnostics={
+                        activeFileIsCpp ? cppLsp.diagnostics
+                        : activeFileIsOcaml ? ocamlLsp.diagnostics
+                        : undefined
+                      }
+                      externalCompletion={
+                        activeFileIsCpp ? cppExternalCompletion
+                        : activeFileIsOcaml ? ocamlExternalCompletion
+                        : undefined
+                      }
+                      externalHover={
+                        activeFileIsCpp ? cppExternalHover
+                        : activeFileIsOcaml ? ocamlExternalHover
+                        : undefined
+                      }
+                      fontSize={fontSize}
+                      onInsertRef={insertRef}
+                      onJumpRef={onJumpRef}
+                      onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
+                      setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}
+                      showBreakpointGutter={activeFileIsOcaml && isDuneProject}
+                      breakpoints={activeFileBreakpoints}
+                      onBreakpointToggle={handleBreakpointToggle}
+                      debugStoppedLine={activeFileStoppedLine}
+                    />
+                  )}
                 </div>
               </div>
             </div>
