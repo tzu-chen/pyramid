@@ -254,8 +254,8 @@ The fundamental data unit. A session is a timestamped workspace for a specific a
 interface Session {
   id: string;                          // UUID
   title: string;
-  session_type: 'freeform' | 'lean' | 'notebook';
-  language: string;                    // 'python' | 'julia' | 'cpp' | 'lean'
+  session_type: 'python' | 'cpp' | 'ocaml' | 'julia' | 'lean' | 'notebook';
+  language: string;                    // mirrors session_type for language types; 'python' for notebook, 'lean' for lean
   tags: string[];                      // JSON array stored as TEXT
   status: 'active' | 'paused' | 'completed' | 'archived';
   links: SessionLink[];                // Cross-app references
@@ -265,6 +265,8 @@ interface Session {
   updated_at: string;
 }
 ```
+
+Each freeform language is its own first-class `session_type` (`python`, `cpp`, `ocaml`, `julia`); `lean` and `notebook` are the two structured types. The shared "freeform-like" behavior (terminal, clangd/ocamllsp, CMake/dune, artifact browser, the freeform right-pane layout) applies to **any type that isn't `lean` or `notebook`** — encoded once as `isFreeformType()` in `server/src/session-types.ts` and `client/src/types.ts` rather than scattered `=== 'freeform'` checks. `language` always mirrors the type for the language sessions, so adding a freeform language is mostly a `session_type` CHECK migration plus a New Session card.
 
 ### Session Files
 
@@ -343,9 +345,9 @@ interface SessionLink {
 
 ## Database Schema (`server/data/pyramid.db`)
 
-SQLite, WAL mode, foreign keys enabled. Created at runtime by `server/src/db.ts`. Tables mirror the TypeScript interfaces above (snake_case columns, `TEXT` ISO-8601 timestamps, `TEXT` UUID primary keys, JSON columns stored as TEXT). Tables: `sessions` (CHECK `session_type IN ('freeform','lean','notebook')`, CHECK `status IN ('active','paused','completed','archived')`), `session_files` (CHECK `file_type IN ('source','output','plot','data','other')`, FK→sessions CASCADE), `execution_runs` (FK→sessions CASCADE, FK→session_files CASCADE; nullable `build_id`/`binary_path`/`flavor` for CMake runs), `lean_session_meta` (UNIQUE `session_id`, CHECK `lake_status IN ('initializing','ready','building','error')`), `builds` (FK→sessions CASCADE), `build_diagnostics` (FK→builds CASCADE), `settings` (key/value).
+SQLite, WAL mode, foreign keys enabled. Created at runtime by `server/src/db.ts`. Tables mirror the TypeScript interfaces above (snake_case columns, `TEXT` ISO-8601 timestamps, `TEXT` UUID primary keys, JSON columns stored as TEXT). Tables: `sessions` (CHECK `session_type IN ('python','cpp','ocaml','julia','lean','notebook')`, CHECK `status IN ('active','paused','completed','archived')`), `session_files` (CHECK `file_type IN ('source','output','plot','data','other')`, FK→sessions CASCADE), `execution_runs` (FK→sessions CASCADE, FK→session_files CASCADE; nullable `build_id`/`binary_path`/`flavor` for CMake runs), `lean_session_meta` (UNIQUE `session_id`, CHECK `lake_status IN ('initializing','ready','building','error')`), `builds` (FK→sessions CASCADE), `build_diagnostics` (FK→builds CASCADE), `settings` (key/value).
 
-**Migrations.** `db.ts` applies inline migrations: introspect-and-add columns via `PRAGMA table_info` (added `build_id`/`binary_path`/`flavor` to `execution_runs`); probe-and-rebuild for CHECK constraint changes (used to add `'notebook'` to `session_type` — attempt a rolled-back insert to detect old CHECK, then rename/recreate/copy). Use the probe-and-rebuild pattern for any future CHECK constraint changes.
+**Migrations.** `db.ts` applies inline migrations: introspect-and-add columns via `PRAGMA table_info` (added `build_id`/`binary_path`/`flavor` to `execution_runs`); probe-and-rebuild for CHECK constraint changes (used to add `'notebook'` to `session_type`, then to split the legacy `'freeform'` type into per-language types `'python'`/`'cpp'`/`'ocaml'`/`'julia'` — attempt a rolled-back insert to detect old CHECK, then rename/recreate/copy, translating each `'freeform'` row to its `language` value in the copy and re-creating the FTS triggers afterward). Use the probe-and-rebuild pattern for any future CHECK constraint changes.
 
 **Indices:** `sessions(session_type|status|created_at)`, `session_files(session_id)`, `lean_session_meta(session_id)` UNIQUE, `execution_runs(session_id|created_at)`, `builds(session_id|created_at)`, `build_diagnostics(build_id)`.
 
@@ -365,7 +367,7 @@ All under `/api` prefix. RESTful verbs. Parameterized SQL only.
 |--------|------|-------------|
 | GET | `/api/sessions` | List sessions. Query params: `session_type`, `status`, `language`, `tag`, `search` (FTS5). |
 | GET | `/api/sessions/:id` | Get single session with files, type-specific data, recent runs, absolute working dir. |
-| POST | `/api/sessions` | Create session. `lean` → scaffolds Lake project (background); `notebook` → seeds an empty `.ipynb`; `cpp` freeform → drops default `.clangd`. |
+| POST | `/api/sessions` | Create session (`language` is derived from `session_type`). `lean` → scaffolds Lake project (background); `notebook` → seeds an empty `.ipynb`; `cpp` → drops default `.clangd`; `ocaml` → drops default `.ocamlformat`/`.merlin`. |
 | PUT | `/api/sessions/:id` | Update title, tags, notes, status, links, language. |
 | DELETE | `/api/sessions/:id` | Delete session, dependent rows, working directory; stops any LSP / kernel / terminal / Lean project. |
 | PATCH | `/api/sessions/:id/status` | Update status. |
@@ -493,7 +495,7 @@ HTTP status codes: 201 (created), 400 (bad input), 404 (not found), 409 (conflic
 |------|-----------|-------------|
 | `/` | `DashboardPage` | Overview: active sessions, recent activity, heatmap |
 | `/sessions` | `SessionListPage` | Browse / filter / search all sessions |
-| `/sessions/new` | `NewSessionPage` | Create session (pick type — freeform / notebook / lean — and language) |
+| `/sessions/new` | `NewSessionPage` | Create session (pick type — python / cpp / ocaml / julia / notebook / lean) |
 | `/sessions/:id` | `SessionPage` | The main workbench (layout varies by session type) |
 
 ### SessionPage — Lean Mode
@@ -688,12 +690,15 @@ No test framework configured. Validate changes by running `npm run build` (which
 3. Wire `forceStopAll()` of the new wrapper into the shutdown handler.
 4. On the client, write a `useXxxLsp` hook (mirror `useCppLsp.ts`) — JSON-RPC over WebSocket, no LSP client library.
 
-### Adding a New Language (single-file freeform)
+### Adding a New Language (freeform language session type)
 
-1. Add to the command map in `server/src/services/execution.ts`.
-2. Add a CodeMirror language mode in `CodeEditor`.
-3. Add to the language selector in `NewSessionPage`.
-4. Verify runtime availability (add a startup check if it's a hard dependency).
+Each freeform language is its own `session_type`, so this overlaps with "Adding a New Session Type":
+
+1. Add the new value to the `session_type` CHECK in `server/src/db.ts` (with a probe-and-rebuild migration block) and to the `SessionType` / `FREEFORM_SESSION_TYPES` unions in `server/src/session-types.ts` and `client/src/types.ts`.
+2. Add to the command map in `server/src/services/execution.ts`.
+3. Add a CodeMirror language mode in `CodeEditor`.
+4. Add a New Session card in `NewSessionPage` (and the `LANGUAGE_FOR_TYPE` map), the type filter in `SessionListPage`, and a Badge color class.
+5. Verify runtime availability (add a startup check if it's a hard dependency). `isFreeformType()` already covers terminal/LSP gating — no `=== 'freeform'` checks to update.
 
 ### Adding a New API Endpoint
 

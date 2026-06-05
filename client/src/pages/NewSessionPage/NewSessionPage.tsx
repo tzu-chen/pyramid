@@ -4,11 +4,20 @@ import { SessionType } from '../../types';
 import { sessionService } from '../../services/sessionService';
 import styles from './NewSessionPage.module.css';
 
+// Language each type runs as (mirrors the server's languageForType).
+const LANGUAGE_FOR_TYPE: Record<SessionType, string> = {
+  python: 'python',
+  cpp: 'cpp',
+  ocaml: 'ocaml',
+  julia: 'julia',
+  notebook: 'python',
+  lean: 'lean',
+};
+
 function NewSessionPage() {
   const navigate = useNavigate();
-  const [sessionType, setSessionType] = useState<SessionType>('freeform');
+  const [sessionType, setSessionType] = useState<SessionType>('python');
   const [title, setTitle] = useState('');
-  const [language, setLanguage] = useState('python');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
@@ -25,7 +34,7 @@ function NewSessionPage() {
       const session = await sessionService.create({
         title: title.trim(),
         session_type: sessionType,
-        language,
+        language: LANGUAGE_FOR_TYPE[sessionType],
       });
       navigate(`/sessions/${session.id}`);
     } catch (err) {
@@ -35,7 +44,10 @@ function NewSessionPage() {
   };
 
   const typeOptions: { value: SessionType; label: string; description: string }[] = [
-    { value: 'freeform', label: 'Freeform', description: 'Open-ended computation and experimentation' },
+    { value: 'python', label: 'Python', description: 'Single-file Python computation and experimentation' },
+    { value: 'cpp', label: 'C++', description: 'C++ with clangd, CMake builds, and Compiler Explorer' },
+    { value: 'ocaml', label: 'OCaml', description: 'OCaml with ocamllsp, dune builds, and debugger' },
+    { value: 'julia', label: 'Julia', description: 'Single-file Julia computation and experimentation' },
     { value: 'notebook', label: 'Notebook', description: 'Jupyter notebook with cell-by-cell execution (Python)' },
     { value: 'lean', label: 'Lean', description: 'Formal proof writing in Lean 4' },
   ];
@@ -52,12 +64,7 @@ function NewSessionPage() {
               <button
                 key={opt.value}
                 className={`${styles.typeOption} ${sessionType === opt.value ? styles.typeSelected : ''}`}
-                onClick={() => {
-                  setSessionType(opt.value);
-                  if (opt.value === 'lean') setLanguage('lean');
-                  else if (opt.value === 'notebook') setLanguage('python');
-                  else if (language === 'lean') setLanguage('python');
-                }}
+                onClick={() => setSessionType(opt.value)}
               >
                 <strong>{opt.label}</strong>
                 <span className={styles.typeDesc}>{opt.description}</span>
@@ -80,18 +87,6 @@ function NewSessionPage() {
             }
           />
         </div>
-
-        {sessionType === 'freeform' && (
-          <div className={styles.field}>
-            <label className={styles.label}>Language</label>
-            <select className={styles.select} value={language} onChange={e => setLanguage(e.target.value)}>
-              <option value="python">Python</option>
-              <option value="cpp">C++</option>
-              <option value="ocaml">OCaml</option>
-              <option value="julia">Julia</option>
-            </select>
-          </div>
-        )}
 
         {error && <div className={styles.error}>{error}</div>}
 

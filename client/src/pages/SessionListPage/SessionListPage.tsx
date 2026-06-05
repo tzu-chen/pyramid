@@ -11,7 +11,6 @@ function SessionListPage() {
   const navigate = useNavigate();
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [languageFilter, setLanguageFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
 
@@ -23,9 +22,8 @@ function SessionListPage() {
   const params = useMemo(() => ({
     session_type: typeFilter || undefined,
     status: statusFilter || undefined,
-    language: languageFilter || undefined,
     search: debouncedSearch || undefined,
-  }), [typeFilter, statusFilter, languageFilter, debouncedSearch]);
+  }), [typeFilter, statusFilter, debouncedSearch]);
 
   const { sessions, loading, refresh } = useSessions(params);
 
@@ -102,7 +100,11 @@ function SessionListPage() {
         />
         <select className={styles.filterSelect} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           <option value="">All Types</option>
-          <option value="freeform">Freeform</option>
+          <option value="python">Python</option>
+          <option value="cpp">C++</option>
+          <option value="ocaml">OCaml</option>
+          <option value="julia">Julia</option>
+          <option value="notebook">Notebook</option>
           <option value="lean">Lean</option>
         </select>
         <select className={styles.filterSelect} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
@@ -111,13 +113,6 @@ function SessionListPage() {
           <option value="paused">Paused</option>
           <option value="completed">Completed</option>
           <option value="archived">Archived</option>
-        </select>
-        <select className={styles.filterSelect} value={languageFilter} onChange={e => setLanguageFilter(e.target.value)}>
-          <option value="">All Languages</option>
-          <option value="python">Python</option>
-          <option value="julia">Julia</option>
-          <option value="cpp">C++</option>
-          <option value="lean">Lean</option>
         </select>
       </div>
 
@@ -159,7 +154,7 @@ function SessionListPage() {
                         <span className={styles.sessionTitle}>{session.title}</span>
                       )}
                       <div className={styles.sessionMeta}>
-                        <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean'} />
+                        <Badge label={session.session_type} variant={session.session_type} />
                         <Badge label={session.language} />
                         <Badge label={session.status} variant={session.status === 'active' ? 'success' : session.status === 'archived' ? 'default' : 'warning'} />
                         {session.tags.map(tag => (

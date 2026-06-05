@@ -20,6 +20,46 @@
   color: var(--color-freeform);
 }
 
+.python {
+  background-color: #e7f0fb;
+  color: #2f6fb3;
+}
+
+[data-theme="dark"] .python {
+  background-color: #16263a;
+  color: #6aa9e0;
+}
+
+.cpp {
+  background-color: #e3f0f6;
+  color: #00599c;
+}
+
+[data-theme="dark"] .cpp {
+  background-color: #102a38;
+  color: #5fb0d6;
+}
+
+.ocaml {
+  background-color: #fde9d9;
+  color: #c75300;
+}
+
+[data-theme="dark"] .ocaml {
+  background-color: #3a2310;
+  color: #f0934a;
+}
+
+.julia {
+  background-color: #efe4f7;
+  color: #7d3ca8;
+}
+
+[data-theme="dark"] .julia {
+  background-color: #2a1638;
+  color: #b884dd;
+}
+
 .lean {
   background-color: #f3d9fa;
   color: var(--color-lean);

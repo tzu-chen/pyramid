@@ -25,6 +25,7 @@ import { ocamlProject } from './services/ocaml-project.js';
 import { ocamlDap } from './services/ocaml-dap.js';
 import { notebookKernel } from './services/notebook-kernel.js';
 import { terminal } from './services/terminal.js';
+import { isFreeformType } from './session-types.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3007', 10);
@@ -87,7 +88,7 @@ server.on('upgrade', (request, socket, head) => {
     const sessionId = cppMatch[1];
     const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
       .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
-    if (!session || session.session_type !== 'freeform' || session.language !== 'cpp') {
+    if (!session || session.session_type !== 'cpp') {
       socket.destroy();
       return;
     }
@@ -106,7 +107,7 @@ server.on('upgrade', (request, socket, head) => {
     const sessionId = ocamlMatch[1];
     const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
       .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
-    if (!session || session.session_type !== 'freeform' || session.language !== 'ocaml') {
+    if (!session || session.session_type !== 'ocaml') {
       socket.destroy();
       return;
     }
@@ -125,7 +126,7 @@ server.on('upgrade', (request, socket, head) => {
     const sessionId = debugMatch[1];
     const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
       .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
-    if (!session || session.session_type !== 'freeform' || session.language !== 'ocaml') {
+    if (!session || session.session_type !== 'ocaml') {
       socket.destroy();
       return;
     }
@@ -157,7 +158,7 @@ server.on('upgrade', (request, socket, head) => {
     const tabId = termMatch[2];
     const session = db.prepare('SELECT session_type, working_dir FROM sessions WHERE id = ?')
       .get(sessionId) as { session_type: string; working_dir: string } | undefined;
-    if (!session || session.session_type !== 'freeform') { socket.destroy(); return; }
+    if (!session || !isFreeformType(session.session_type)) { socket.destroy(); return; }
     wss.handleUpgrade(request, socket, head, (ws) => {
       const cwd = resolveSessionCwd(session.working_dir);
       terminal.handleWebSocket(ws, sessionId, tabId, cwd);

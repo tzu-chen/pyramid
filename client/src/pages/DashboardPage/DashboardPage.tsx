@@ -4,7 +4,7 @@ import { StatsOverview, HeatmapEntry, Session } from '../../types';
 import { statsService } from '../../services/statsService';
 import { sessionService } from '../../services/sessionService';
 import Heatmap from '../../components/Heatmap/Heatmap';
-import Badge from '../../components/Badge/Badge';
+import Badge, { type BadgeVariant } from '../../components/Badge/Badge';
 import styles from './DashboardPage.module.css';
 
 function DashboardPage() {
@@ -44,7 +44,7 @@ function DashboardPage() {
           <div className={styles.typeGrid}>
             {overview.sessions_by_type.map(s => (
               <div key={s.session_type} className={styles.typeCard}>
-                <Badge label={s.session_type} variant={s.session_type as 'freeform' | 'lean'} />
+                <Badge label={s.session_type} variant={s.session_type as BadgeVariant} />
                 <span className={styles.typeCount}>{s.count}</span>
               </div>
             ))}
@@ -66,7 +66,7 @@ function DashboardPage() {
                 <div className={styles.sessionInfo}>
                   <span className={styles.sessionTitle}>{session.title}</span>
                   <div className={styles.sessionMeta}>
-                    <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean'} />
+                    <Badge label={session.session_type} variant={session.session_type} />
                     <Badge label={session.language} />
                   </div>
                 </div>

@@ -1,8 +1,21 @@
 import styles from './Badge.module.css';
 
+export type BadgeVariant =
+  | 'default'
+  | 'freeform'
+  | 'python'
+  | 'cpp'
+  | 'ocaml'
+  | 'julia'
+  | 'lean'
+  | 'notebook'
+  | 'success'
+  | 'warning'
+  | 'danger';
+
 interface BadgeProps {
   label: string;
-  variant?: 'default' | 'freeform' | 'lean' | 'notebook' | 'success' | 'warning' | 'danger';
+  variant?: BadgeVariant;
 }
 
 function Badge({ label, variant = 'default' }: BadgeProps) {

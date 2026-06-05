@@ -52,7 +52,7 @@ import {
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType } from '../../types';
+import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType, isFreeformType } from '../../types';
 import { formatBytes } from '../../utils/format';
 import styles from './SessionPage.module.css';
 
@@ -142,7 +142,7 @@ function SessionPage() {
 
   const isLean = session?.session_type === 'lean';
   const isNotebook = session?.session_type === 'notebook';
-  const isFreeform = session?.session_type === 'freeform';
+  const isFreeform = !!session && isFreeformType(session.session_type);
 
   // User-controlled suspend toggle. When true, all WebSockets for this session
   // (Lean LSP, clangd, notebook kernel, terminal PTYs) are torn down; the
@@ -1073,7 +1073,7 @@ function SessionPage() {
       <div className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
           <h2 className={styles.sessionTitle}>{session.title}</h2>
-          <Badge label={session.session_type} variant={session.session_type as 'freeform' | 'lean' | 'notebook'} />
+          <Badge label={session.session_type} variant={session.session_type} />
           <Badge label={session.language} />
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />

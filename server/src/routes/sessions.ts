@@ -14,6 +14,7 @@ import { ocamlDap } from '../services/ocaml-dap.js';
 import { symlinkPath } from '../services/bc-fixup.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
 import { terminal } from '../services/terminal.js';
+import { isFreeformType, languageForType } from '../session-types.js';
 
 const router = Router();
 
@@ -112,12 +113,16 @@ router.get('/:id', (req: Request, res: Response) => {
 // POST /api/sessions
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, session_type = 'freeform', language = 'python', tags = [], links = [] } = req.body;
+    const { title, session_type = 'python', tags = [], links = [] } = req.body;
 
     if (!title) {
       res.status(400).json({ error: 'Title is required' });
       return;
     }
+
+    // Language always mirrors the session type (python/cpp/ocaml/julia → same;
+    // lean → 'lean'; notebook → 'python'), so callers only need to send the type.
+    const language = languageForType(session_type);
 
     const id = uuidv4();
     const now = getCstTimestamp();
@@ -254,7 +259,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     if (session.session_type === 'notebook') {
       notebookKernel.stopKernel(req.params.id as string);
     }
-    if (session.session_type === 'freeform') {
+    if (isFreeformType(session.session_type as string)) {
       terminal.killSession(req.params.id as string);
       cppLsp.stopLsp(req.params.id as string);
       ocamlLsp.stopLsp(req.params.id as string);
