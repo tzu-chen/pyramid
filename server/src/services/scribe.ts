@@ -16,6 +16,19 @@ export interface ScribeFlowchart {
   [key: string]: unknown;
 }
 
+export interface ScribeBook {
+  id: string;
+  filename: string;
+  subject?: string;
+}
+
+// Raw attachment shape as returned by Scribe's /api/attachments (subset of fields we use).
+interface ScribeAttachment {
+  id: string;
+  filename: string;
+  subject?: string;
+}
+
 async function scribeFetch<T>(path: string): Promise<T | null> {
   try {
     const controller = new AbortController();
@@ -53,4 +66,24 @@ export async function searchScribeNodes(
 export async function listScribeFlowcharts(): Promise<ScribeFlowchart[]> {
   const result = await scribeFetch<ScribeFlowchart[]>('/api/flowcharts');
   return result ?? [];
+}
+
+// Scribe's PDF library (attachments) are "books". There is no server-side
+// search endpoint, so fetch the full list and filter by filename/subject here.
+export async function searchScribeBooks(query: string): Promise<ScribeBook[]> {
+  const attachments = await scribeFetch<ScribeAttachment[]>('/api/attachments');
+  if (!attachments) return [];
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? attachments.filter(
+        a =>
+          a.filename?.toLowerCase().includes(q) ||
+          (a.subject?.toLowerCase().includes(q) ?? false)
+      )
+    : attachments;
+  return matches.slice(0, 50).map(a => ({
+    id: a.id,
+    filename: a.filename,
+    subject: a.subject,
+  }));
 }

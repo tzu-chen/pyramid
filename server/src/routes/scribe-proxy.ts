@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { fetchScribeNode, searchScribeNodes, listScribeFlowcharts } from '../services/scribe.js';
+import { fetchScribeNode, searchScribeNodes, listScribeFlowcharts, searchScribeBooks } from '../services/scribe.js';
 
 const router = Router();
 
@@ -8,6 +8,17 @@ router.get('/flowcharts', async (_req: Request, res: Response) => {
   try {
     const flowcharts = await listScribeFlowcharts();
     res.json(flowcharts);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/scribe/books?search=X  (Scribe's PDF library / attachments)
+router.get('/books', async (req: Request, res: Response) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    const books = await searchScribeBooks(search);
+    res.json(books);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

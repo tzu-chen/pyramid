@@ -160,6 +160,18 @@ function ClaudePanel({
         }).catch(() => {});
       }
     }
+
+    // Book links carry their metadata directly (filename + optional page); no fetch needed.
+    const bookLinks = links.filter(l => l.app === 'scribe' && l.ref_type === 'book');
+    for (const link of bookLinks) {
+      const title = link.label || link.ref_id;
+      const label = `Scribe book: ${title}${link.page ? ` (p.${link.page})` : ''}`;
+      const content = link.page ? `Book: ${title}\nPage: ${link.page}` : `Book: ${title}`;
+      setContextBlocks(prev => {
+        if (prev.some(b => b.label === label)) return prev;
+        return [...prev, { label, content, source: 'scribe' }];
+      });
+    }
   }, [links]);
 
   const formatScribeNode = (node: ScribeNode): string => {

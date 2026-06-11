@@ -41,6 +41,12 @@ export interface ScribeNode {
   flowchart_name?: string;
 }
 
+export interface ScribeBook {
+  id: string;
+  filename: string;
+  subject?: string;
+}
+
 export const claudeService = {
   async ask(
     sessionId: string,
@@ -76,6 +82,10 @@ export const scribeService = {
 
   async getNode(flowchartId: string, nodeKey: string): Promise<ScribeNode> {
     return api.get<ScribeNode>(`/scribe/nodes/${flowchartId}/${nodeKey}`);
+  },
+
+  async searchBooks(search: string): Promise<ScribeBook[]> {
+    return api.get<ScribeBook[]>(`/scribe/books?search=${encodeURIComponent(search)}`);
   },
 };
 

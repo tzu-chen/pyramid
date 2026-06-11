@@ -125,7 +125,7 @@ Each freeform language is its own first-class `session_type`; `lean`/`notebook` 
 
 **Builds / diagnostics** (C++ CMake) — `builds` (flavor, success, duration_ms, diagnostic_count, ANSI-stripped log) + `build_diagnostics` (file, line, col, severity, message).
 
-**Cross-app links** — `{ app: navigate|scribe|monolith|granary, ref_type: arxiv_id|paper_id|note_id|flowchart_node|project|entry_id, ref_id, label? }`.
+**Cross-app links** — `{ app: navigate|scribe|monolith|granary, ref_type: arxiv_id|paper_id|note_id|flowchart_node|book|project|entry_id, ref_id, label?, page? }`. `book` links into Scribe's PDF library (attachments; `ref_id` = attachment id) with an optional `page`.
 
 ## Database (`server/data/pyramid.db`)
 

@@ -12,13 +12,15 @@ export function isFreeformType(sessionType: string): boolean {
 }
 export type FileType = 'source' | 'output' | 'plot' | 'data' | 'other';
 export type LinkApp = 'navigate' | 'scribe' | 'monolith' | 'granary';
-export type RefType = 'arxiv_id' | 'paper_id' | 'note_id' | 'flowchart_node' | 'project' | 'entry_id';
+export type RefType = 'arxiv_id' | 'paper_id' | 'note_id' | 'flowchart_node' | 'book' | 'project' | 'entry_id';
 
 export interface SessionLink {
   app: LinkApp;
   ref_type: RefType;
   ref_id: string;
   label?: string;
+  // Optional page location, used for `book` links into Scribe's PDF library.
+  page?: number;
 }
 
 export interface Session {

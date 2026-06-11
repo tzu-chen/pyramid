@@ -11,7 +11,7 @@ import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
 import { leanService } from '../../services/leanService';
-import { scribeService, type ScribeNode } from '../../services/claudeService';
+import { scribeService, type ScribeNode, type ScribeBook } from '../../services/claudeService';
 import CodeEditor from '../../components/CodeEditor/CodeEditor';
 import ClaudePanel from '../../components/ClaudePanel/ClaudePanel';
 import MarkdownRenderer from '../../components/MarkdownRenderer/MarkdownRenderer';
@@ -91,10 +91,14 @@ function SessionPage() {
   const claudePromptFocusRef = useRef<(() => void) | null>(null);
 
   // Link management state
-  const [linkAddMode, setLinkAddMode] = useState<'scribe' | 'navigate' | 'granary' | 'monolith' | null>(null);
+  const [linkAddMode, setLinkAddMode] = useState<'scribe' | 'scribe-book' | 'navigate' | 'granary' | 'monolith' | null>(null);
   const [linkScribeSearch, setLinkScribeSearch] = useState('');
   const [linkScribeResults, setLinkScribeResults] = useState<ScribeNode[]>([]);
   const [linkScribeSearching, setLinkScribeSearching] = useState(false);
+  const [linkBookSearch, setLinkBookSearch] = useState('');
+  const [linkBookResults, setLinkBookResults] = useState<ScribeBook[]>([]);
+  const [linkBookSearching, setLinkBookSearching] = useState(false);
+  const [linkBookPage, setLinkBookPage] = useState('');
   const [linkInputValue, setLinkInputValue] = useState('');
 
   // Editor font size and symbol insertion
@@ -950,8 +954,41 @@ function SessionPage() {
     setLinkScribeResults([]);
   };
 
+  const handleBookLinkSearch = async () => {
+    setLinkBookSearching(true);
+    try {
+      const results = await scribeService.searchBooks(linkBookSearch);
+      setLinkBookResults(results);
+    } catch {
+      setLinkBookResults([]);
+    } finally {
+      setLinkBookSearching(false);
+    }
+  };
+
+  const resetBookLinkForm = () => {
+    setLinkAddMode(null);
+    setLinkBookSearch('');
+    setLinkBookResults([]);
+    setLinkBookPage('');
+  };
+
+  const handleAddBookLink = (book: ScribeBook) => {
+    if (!session) return;
+    const page = parseInt(linkBookPage, 10);
+    const newLink: SessionLink = {
+      app: 'scribe',
+      ref_type: 'book',
+      ref_id: book.id,
+      label: book.filename,
+      ...(Number.isFinite(page) && page > 0 ? { page } : {}),
+    };
+    updateLinks([...session.links, newLink]);
+    resetBookLinkForm();
+  };
+
   const handleAddTextLink = () => {
-    if (!session || !linkAddMode || linkAddMode === 'scribe' || !linkInputValue.trim()) return;
+    if (!session || !linkAddMode || linkAddMode === 'scribe' || linkAddMode === 'scribe-book' || !linkInputValue.trim()) return;
     const appRefMap: Record<string, { app: LinkApp; ref_type: RefType }> = {
       navigate: { app: 'navigate', ref_type: 'arxiv_id' },
       granary: { app: 'granary', ref_type: 'entry_id' },
@@ -1575,6 +1612,7 @@ function SessionPage() {
                         <Badge label={link.app} />
                         <span className={styles.linkRef}>
                           {link.label || link.ref_id}
+                          {link.page ? <span className={styles.linkPage}> · p.{link.page}</span> : null}
                         </span>
                         {link.label && (
                           <span className={styles.linkMeta}>{link.ref_type}: {link.ref_id}</span>
@@ -1594,7 +1632,8 @@ function SessionPage() {
                 <div className={styles.addLinkRow}>
                   {!linkAddMode ? (
                     <div className={styles.addLinkButtons}>
-                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('scribe')}>+ Scribe</button>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('scribe')}>+ Scribe Node</button>
+                      <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('scribe-book')}>+ Scribe Book</button>
                       <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('navigate')}>+ Navigate</button>
                       <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('granary')}>+ Granary</button>
                       <button className={styles.addLinkBtn} onClick={() => setLinkAddMode('monolith')}>+ Monolith</button>
@@ -1630,6 +1669,53 @@ function SessionPage() {
                               <span className={styles.linkScribeTitle}>{node.title}</span>
                               {node.flowchart_name && (
                                 <span className={styles.linkScribeFlowchart}>{node.flowchart_name}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : linkAddMode === 'scribe-book' ? (
+                    <div className={styles.linkForm}>
+                      <div className={styles.linkFormHeader}>
+                        <span>Link to Scribe book</span>
+                        <button className={styles.linkFormCancel} onClick={resetBookLinkForm}>&times;</button>
+                      </div>
+                      <div className={styles.linkFormRow}>
+                        <input
+                          className={styles.linkFormInput}
+                          type="text"
+                          value={linkBookSearch}
+                          onChange={e => setLinkBookSearch(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleBookLinkSearch()}
+                          placeholder="Search PDF library by filename or subject..."
+                          autoFocus
+                        />
+                        <button className={styles.linkFormBtn} onClick={handleBookLinkSearch} disabled={linkBookSearching}>
+                          {linkBookSearching ? '...' : 'Search'}
+                        </button>
+                      </div>
+                      <div className={styles.linkFormRow}>
+                        <input
+                          className={styles.linkFormInput}
+                          type="number"
+                          min="1"
+                          value={linkBookPage}
+                          onChange={e => setLinkBookPage(e.target.value)}
+                          placeholder="Page (optional)"
+                        />
+                      </div>
+                      {linkBookResults.length > 0 && (
+                        <div className={styles.linkScribeResults}>
+                          {linkBookResults.map(book => (
+                            <button
+                              key={book.id}
+                              className={styles.linkScribeResultItem}
+                              onClick={() => handleAddBookLink(book)}
+                            >
+                              <span className={styles.linkScribeTitle}>{book.filename}</span>
+                              {book.subject && (
+                                <span className={styles.linkScribeFlowchart}>{book.subject}</span>
                               )}
                             </button>
                           ))}

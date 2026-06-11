@@ -578,6 +578,11 @@
   color: var(--color-text-tertiary);
 }
 
+.linkPage {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
 .linkRemoveBtn {
   margin-left: auto;
   font-size: var(--font-size-base);
