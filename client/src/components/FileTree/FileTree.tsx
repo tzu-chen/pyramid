@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { fileService } from '../../services/fileService';
-import { SessionFile } from '../../types';
+import { sessionService } from '../../services/sessionService';
+import { SessionFile, Session } from '../../types';
 import { ChevronRightIcon, ChevronDownIcon, DiamondIcon, PlusIcon, RefreshIcon } from '../Icons/Icons';
 import styles from './FileTree.module.css';
 
@@ -175,6 +176,9 @@ function ContextMenu({
   }
   if (menu.node) {
     items.push({ label: 'Rename', action: 'rename' });
+    if (!menu.node.isDir) {
+      items.push({ label: 'Move to Session…', action: 'move' });
+    }
     items.push({ label: 'Delete', action: 'delete' });
   }
 
@@ -214,6 +218,112 @@ function ContextMenu({
           {item.label}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Move-to-Session Modal ──
+
+function MoveToSessionModal({
+  currentSessionId,
+  node,
+  onClose,
+  onMove,
+}: {
+  currentSessionId: string;
+  node: TreeNode;
+  onClose: () => void;
+  onMove: (targetSessionId: string) => Promise<void>;
+}) {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    sessionService.list()
+      .then((all) => {
+        if (cancelled) return;
+        setSessions(all.filter((s) => s.id !== currentSessionId));
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError((e as Error).message);
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? sessions.filter((s) => s.title.toLowerCase().includes(q) || s.session_type.toLowerCase().includes(q))
+    : sessions;
+
+  const handlePick = async (targetSessionId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onMove(targetSessionId);
+    } catch (e) {
+      setError((e as Error).message || 'Failed to move file');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 420, maxWidth: '90vw', maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+      >
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
+          <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text)' }}>Move to session</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>{node.path}</div>
+        </div>
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)' }}>
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search sessions…"
+            style={{ width: '100%', boxSizing: 'border-box', fontSize: 'var(--font-size-sm)', padding: '6px 8px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text)', outline: 'none' }}
+          />
+        </div>
+        {error && (
+          <div style={{ padding: '8px 16px', fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', background: 'var(--color-danger-light)' }}>{error}</div>
+        )}
+        <div style={{ overflowY: 'auto', flex: 1, opacity: busy ? 0.6 : 1, pointerEvents: busy ? 'none' : 'auto' }}>
+          {loading && <div style={{ padding: 16, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)' }}>Loading…</div>}
+          {!loading && filtered.length === 0 && (
+            <div style={{ padding: 16, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)' }}>No matching sessions</div>
+          )}
+          {filtered.map((s) => (
+            <div
+              key={s.id}
+              onClick={() => handlePick(s.id)}
+              style={{ padding: '8px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--font-size-sm)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--color-bg-tertiary)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            >
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text)' }}>{s.title}</span>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', flexShrink: 0 }}>{s.session_type}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -305,6 +415,7 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
   const [creatingInDir, setCreatingInDir] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [movingNode, setMovingNode] = useState<TreeNode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeFile = files.find((f) => f.id === activeFileId);
@@ -389,6 +500,15 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
     setRenamingPath(null);
   }, [sessionId, tree, onFilesChanged, refreshTree]);
 
+  const handleMove = useCallback(async (targetSessionId: string) => {
+    const node = movingNode;
+    if (!node?.file) return;
+    await fileService.moveToSession(sessionId, node.file.id, targetSessionId);
+    onFilesChanged();
+    await refreshTree();
+    setMovingNode(null);
+  }, [movingNode, sessionId, onFilesChanged, refreshTree]);
+
   // Infer language from extension
   const inferLanguage = useCallback((filename: string): string => {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
@@ -450,6 +570,8 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
       handleDelete(node);
     } else if (action === 'rename' && node) {
       setRenamingPath(node.path);
+    } else if (action === 'move' && node && !node.isDir) {
+      setMovingNode(node);
     } else if (action === 'newFile') {
       if (node?.isDir) {
         setCreatingInDir(node.path);
@@ -548,6 +670,16 @@ export default function FileTree({ sessionId, files, activeFileId, onSelectFile,
           menu={contextMenu}
           onClose={() => setContextMenu(null)}
           onAction={handleContextAction}
+        />
+      )}
+
+      {/* Move-to-session modal */}
+      {movingNode && (
+        <MoveToSessionModal
+          currentSessionId={sessionId}
+          node={movingNode}
+          onClose={() => setMovingNode(null)}
+          onMove={handleMove}
         />
       )}
     </div>

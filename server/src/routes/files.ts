@@ -182,6 +182,77 @@ router.patch('/:id/files/:fileId', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/sessions/:id/files/:fileId/move (move file to another session's dir)
+router.post('/:id/files/:fileId/move', (req: Request, res: Response) => {
+  try {
+    const file = db.prepare('SELECT * FROM session_files WHERE id = ? AND session_id = ?').get(req.params.fileId, req.params.id) as Record<string, unknown> | undefined;
+    if (!file) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
+    const { target_session_id } = req.body;
+    if (!target_session_id) {
+      res.status(400).json({ error: 'target_session_id is required' });
+      return;
+    }
+    if (target_session_id === req.params.id) {
+      res.status(400).json({ error: 'Source and target sessions are the same' });
+      return;
+    }
+
+    const sourceSession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as Record<string, unknown>;
+    const targetSession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(target_session_id) as Record<string, unknown> | undefined;
+    if (!targetSession) {
+      res.status(404).json({ error: 'Target session not found' });
+      return;
+    }
+
+    // Target path defaults to the source's relative path; an explicit filename
+    // may relocate it within the target session.
+    const desired = (req.body.filename && String(req.body.filename).trim()) || (file.filename as string);
+    const validation = validateFilePath(desired);
+    if (!validation.valid) {
+      res.status(400).json({ error: validation.error });
+      return;
+    }
+    const targetFilename = validation.normalized!;
+
+    const sourceRoot = getSessionRoot(sourceSession.working_dir as string);
+    const targetRoot = getSessionRoot(targetSession.working_dir as string);
+    const oldPath = path.join(sourceRoot, file.filename as string);
+    const newPath = path.join(targetRoot, targetFilename);
+
+    // Refuse to clobber an existing file in the target — whether it is tracked
+    // in session_files or only present on disk (e.g. an unregistered orphan).
+    const existing = db.prepare('SELECT id FROM session_files WHERE session_id = ? AND filename = ?').get(target_session_id, targetFilename);
+    if (existing || fs.existsSync(newPath)) {
+      res.status(409).json({ error: 'A file with this name already exists in the target session' });
+      return;
+    }
+
+    // Move on disk (both roots live under DATA_DIR, so rename stays intra-fs).
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
+    if (fs.existsSync(oldPath)) {
+      fs.renameSync(oldPath, newPath);
+    } else {
+      fs.writeFileSync(newPath, '');
+    }
+    cleanEmptyParentDirs(oldPath, sourceRoot);
+
+    // Reassign the row to the target session. A moved file is never primary in
+    // its new home; the source session simply loses it.
+    const now = getCstTimestamp();
+    db.prepare('UPDATE session_files SET session_id = ?, filename = ?, is_primary = 0, updated_at = ? WHERE id = ?')
+      .run(target_session_id, targetFilename, now, req.params.fileId);
+
+    const moved = db.prepare('SELECT * FROM session_files WHERE id = ?').get(req.params.fileId);
+    res.json(moved);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // PUT /api/sessions/:id/files/:fileId/content
 router.put('/:id/files/:fileId/content', (req: Request, res: Response) => {
   try {

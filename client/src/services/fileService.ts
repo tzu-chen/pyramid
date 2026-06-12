@@ -34,6 +34,13 @@ export const fileService = {
     return api.patch<SessionFile>(`/sessions/${sessionId}/files/${fileId}`, { filename: newFilename });
   },
 
+  async moveToSession(sessionId: string, fileId: string, targetSessionId: string, filename?: string): Promise<SessionFile> {
+    return api.post<SessionFile>(`/sessions/${sessionId}/files/${fileId}/move`, {
+      target_session_id: targetSessionId,
+      ...(filename ? { filename } : {}),
+    });
+  },
+
   async createFolder(sessionId: string, folderPath: string): Promise<void> {
     await api.post(`/sessions/${sessionId}/folders`, { path: folderPath });
   },
