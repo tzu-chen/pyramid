@@ -1232,7 +1232,7 @@ function SessionPage() {
                   </button>
                 </>
               )}
-              <button className={styles.runButton} onClick={handleExecute} disabled={executing}>
+              <button className={styles.runButton} onClick={handleExecute} disabled={executing} title="Run (Ctrl+Enter)">
                 {executing ? ((isCmakeProject || isDuneProject) ? 'Building/Running...' : 'Running...') : 'Run'}
               </button>
               {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
@@ -1389,6 +1389,7 @@ function SessionPage() {
                       }
                       fontSize={fontSize}
                       onInsertRef={insertRef}
+                      onRun={handleExecute}
                       onJumpRef={onJumpRef}
                       onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
                       setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}

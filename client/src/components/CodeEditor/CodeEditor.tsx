@@ -554,6 +554,8 @@ interface CodeEditorProps {
   readOnly?: boolean;
   fontSize?: number;
   onInsertRef?: MutableRefObject<((text: string) => void) | null>;
+  // Invoked when the run shortcut (Ctrl/Cmd+Enter) fires while the editor is focused.
+  onRun?: () => void;
   onJumpRef?: MutableRefObject<((line: number, column: number) => void) | null>;
   onGetSelectionRef?: MutableRefObject<(() => EditorSelection) | null>;
   // 1-indexed line; null clears. Used for asm ↔ source hover sync.
@@ -608,7 +610,7 @@ const tabKeymap = Prec.highest(keymap.of([
   { key: 'Mod-Space', run: startCompletion },
 ]));
 
-function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false, showLineNumbers = true, showBreakpointGutter = false, breakpoints, onBreakpointToggle, debugStoppedLine }: CodeEditorProps) {
+function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, readOnly = false, fontSize, onInsertRef, onRun, onJumpRef, onGetSelectionRef, setHighlightedLineRef, externalCompletion, externalHover, hideSearchBar = false, showLineNumbers = true, showBreakpointGutter = false, breakpoints, onBreakpointToggle, debugStoppedLine }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const diagnosticsCompartment = useRef(new Compartment());
@@ -629,6 +631,8 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
   onChangeRef.current = onChange;
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
+  const onRunRef = useRef(onRun);
+  onRunRef.current = onRun;
   const externalCompletionRef = useRef(externalCompletion);
   externalCompletionRef.current = externalCompletion;
   const externalHoverRef = useRef(externalHover);
@@ -658,10 +662,26 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       },
     ]));
 
+    // Run shortcut: Ctrl+Enter (Cmd+Enter on Mac/iPad) triggers the session's
+    // run/execute action when the editor is focused. No-op if onRun isn't set.
+    const runKeymap = Prec.highest(keymap.of([
+      {
+        key: 'Mod-Enter',
+        run: () => {
+          if (onRunRef.current) {
+            onRunRef.current();
+            return true;
+          }
+          return false;
+        },
+      },
+    ]));
+
     const extensions: Extension[] = [
       vimCompartment.current.of(vimModeRef.current ? vim() : []),
       basicSetup,
       focusSearchKeymap,
+      runKeymap,
       tabKeymap,
       lineNumbersCompartment.current.of(showLineNumbersRef.current ? [] : hideLineNumbersTheme),
       searchHighlightField,
