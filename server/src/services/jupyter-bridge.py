@@ -259,6 +259,14 @@ def shell_loop(kc):
 def main():
     cwd = os.environ.get("PYRAMID_NOTEBOOK_CWD", os.getcwd())
     km = KernelManager(kernel_name="python3")
+    # Launch the kernel from the session's uv venv when one was provided, so the
+    # notebook sees the venv's packages. We keep this bridge on the stable
+    # interpreter and only redirect the kernel argv (the venv must have ipykernel
+    # installed; if not, wait_for_ready below times out and surfaces an error).
+    venv_python = os.environ.get("PYRAMID_VENV_PYTHON")
+    if venv_python and os.path.exists(venv_python):
+        ks = km.kernel_spec  # loads the default python3 spec object
+        ks.argv = [venv_python, "-m", "ipykernel_launcher", "-f", "{connection_file}"]
     km.start_kernel(cwd=cwd)
     kc = km.client()
     kc.start_channels()

@@ -29,8 +29,13 @@ export const sessionService = {
     language: string;
     tags?: string[];
     links?: unknown[];
+    python_version?: string;
   }): Promise<Session> {
     return api.post<Session>('/sessions', data);
+  },
+
+  async clone(id: string): Promise<Session> {
+    return api.post<Session>(`/sessions/${id}/clone`);
   },
 
   async update(id: string, data: Partial<Pick<Session, 'title' | 'tags' | 'notes' | 'status' | 'links' | 'language'>>): Promise<Session> {

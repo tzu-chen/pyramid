@@ -75,6 +75,18 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS python_session_meta (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    python_version TEXT NOT NULL DEFAULT '',
+    venv_status TEXT NOT NULL DEFAULT 'initializing'
+      CHECK (venv_status IN ('initializing', 'ready', 'error')),
+    error_message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -126,6 +138,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_runs_session ON execution_runs(session_id);
   CREATE INDEX IF NOT EXISTS idx_runs_created ON execution_runs(created_at);
   CREATE INDEX IF NOT EXISTS idx_lean_meta_session ON lean_session_meta(session_id);
+  CREATE INDEX IF NOT EXISTS idx_python_meta_session ON python_session_meta(session_id);
   CREATE INDEX IF NOT EXISTS idx_builds_session ON builds(session_id);
   CREATE INDEX IF NOT EXISTS idx_builds_created ON builds(created_at);
   CREATE INDEX IF NOT EXISTS idx_build_diagnostics_build ON build_diagnostics(build_id);

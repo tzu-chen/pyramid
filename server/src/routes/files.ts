@@ -507,7 +507,7 @@ router.post('/:id/upload', upload.single('file'), (req: Request, res: Response) 
 });
 
 // Names ignored everywhere in tree walks: build/cache outputs, VCS metadata, OS junk.
-const IGNORED_NAMES = new Set([
+export const IGNORED_NAMES = new Set([
   '.lake', '.git', 'node_modules', '__pycache__', '.ipynb_checkpoints',
   '.cache', '.venv', 'venv', 'dist', 'build', '.DS_Store',
 ]);

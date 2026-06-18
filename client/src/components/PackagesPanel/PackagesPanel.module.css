@@ -1,0 +1,201 @@
+.root {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.placeholder {
+  color: var(--color-text-tertiary);
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.placeholderSmall {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lockPill {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lockOk { background-color: var(--color-success); color: white; }
+.lockNone { background-color: var(--color-bg-tertiary); color: var(--color-text-tertiary); }
+
+.headerActions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.smallButton,
+.addButton {
+  font-size: var(--font-size-xs);
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.smallButton:hover:not(:disabled),
+.addButton:hover:not(:disabled) {
+  background-color: var(--color-bg-tertiary);
+}
+
+.smallButton:disabled,
+.addButton:disabled,
+.removeButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+.devToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.busy {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.depList,
+.installedList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.depItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+}
+
+.depName {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.devTag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}
+
+.removeButton {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.removeButton:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.installedToggle {
+  align-self: flex-start;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.installedToggle:hover { color: var(--color-text); }
+
+.installedItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 1px var(--space-2);
+}
+
+.installedName { color: var(--color-text); }
+.installedVersion { margin-left: auto; color: var(--color-text-tertiary); }

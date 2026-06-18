@@ -6,6 +6,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { fileService } from '../../services/fileService';
 import { editorStorage } from '../../services/editorStorage';
 import { formatBytes } from '../../utils/format';
+import { parseMissingModule } from '../../utils/parseMissingModule';
 import styles from './NotebookEditor.module.css';
 
 type CellType = 'code' | 'markdown';
@@ -32,6 +33,8 @@ interface NotebookEditorProps {
   fileId: string;
   fontSize: number;
   suspended?: boolean;
+  // Install a package surfaced by a cell's ModuleNotFoundError (resolves when done).
+  onInstallPackage?: (name: string) => Promise<void>;
 }
 
 function newId(): string {
@@ -166,7 +169,7 @@ function getHeadingLevel(cell: NotebookCell): number {
 }
 
 
-function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: NotebookEditorProps) {
+function NotebookEditor({ sessionId, fileId, fontSize, suspended = false, onInstallPackage }: NotebookEditorProps) {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
@@ -803,6 +806,7 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false }: Note
               onStopEdit={() => stopEditCell(cell.id)}
               onChange={(src) => updateCellSource(cell.id, src)}
               onRun={() => runCell(cell.id)}
+              onInstallPackage={onInstallPackage}
               onAdvance={() => advanceFromCell(cell.id)}
               onDelete={() => deleteCell(cell.id)}
               onMoveUp={() => moveCell(cell.id, -1)}
@@ -840,6 +844,7 @@ interface CellViewProps {
   onStopEdit: () => void;
   onChange: (src: string) => void;
   onRun: () => void;
+  onInstallPackage?: (name: string) => Promise<void>;
   onAdvance: () => void;
   onDelete: () => void;
   onMoveUp: () => void;
@@ -852,7 +857,7 @@ interface CellViewProps {
 }
 
 function CellView(props: CellViewProps) {
-  const { cell, showCellNumber, showLineNumbers, showHeader, active, editFocused, editing, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onStartEdit, onStopEdit, onChange, onRun, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
+  const { cell, showCellNumber, showLineNumbers, showHeader, active, editFocused, editing, running, kernelIdle, fontSize, headingLevel, sectionCollapsed, hiddenInSection, halfWidth, onFocus, onStartEdit, onStopEdit, onChange, onRun, onInstallPackage, onAdvance, onDelete, onMoveUp, onMoveDown, onChangeType, onToggleOutputs, onToggleSection, onToggleHalfWidth, completionSource } = props;
   const meta = (cell.metadata || {}) as Record<string, unknown>;
   const outputsCollapsed = !!meta.collapsed;
   const lastRunSource = typeof meta.last_run_source === 'string' ? meta.last_run_source : undefined;
@@ -1030,7 +1035,15 @@ function CellView(props: CellViewProps) {
                 </div>
                 {!outputsCollapsed && (
                   <div className={styles.outputs}>
-                    {cell.outputs.map((out, i) => <OutputView key={i} output={out} />)}
+                    {cell.outputs.map((out, i) => (
+                      <OutputView
+                        key={i}
+                        output={out}
+                        onInstallMissing={onInstallPackage
+                          ? async (name) => { await onInstallPackage(name); onRun(); }
+                          : undefined}
+                      />
+                    ))}
                   </div>
                 )}
               </>
@@ -1042,7 +1055,8 @@ function CellView(props: CellViewProps) {
   );
 }
 
-function OutputView({ output }: { output: CellOutput }) {
+function OutputView({ output, onInstallMissing }: { output: CellOutput; onInstallMissing?: (name: string) => void | Promise<void> }) {
+  const [installing, setInstalling] = useState(false);
   if (output.output_type === 'stream') {
     return (
       <pre className={`${styles.stream} ${output.name === 'stderr' ? styles.stderr : styles.stdout}`}>
@@ -1054,7 +1068,26 @@ function OutputView({ output }: { output: CellOutput }) {
     const tb = (output.traceback || []).join('\n');
     // Strip ANSI escape codes for readable display
     const clean = tb.replace(/\x1b\[[0-9;]*m/g, '');
-    return <pre className={styles.error}>{clean || `${output.ename}: ${output.evalue}`}</pre>;
+    const missing = output.ename === 'ModuleNotFoundError'
+      ? parseMissingModule(output.evalue || clean)
+      : null;
+    return (
+      <>
+        <pre className={styles.error}>{clean || `${output.ename}: ${output.evalue}`}</pre>
+        {missing && onInstallMissing && (
+          <button
+            className={styles.installMissingButton}
+            disabled={installing}
+            onClick={async () => {
+              setInstalling(true);
+              try { await onInstallMissing(missing); } finally { setInstalling(false); }
+            }}
+          >
+            {installing ? `Installing ${missing}…` : `Install '${missing}' & re-run`}
+          </button>
+        )}
+      </>
+    );
   }
   if (output.output_type === 'execute_result' || output.output_type === 'display_data') {
     const data = output.data || {};

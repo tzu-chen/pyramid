@@ -4,7 +4,7 @@ import { useSessions } from '../../hooks/useSessions';
 import { useDebounce } from '../../hooks/useDebounce';
 import { sessionService } from '../../services/sessionService';
 import Badge from '../../components/Badge/Badge';
-import { PencilIcon, TrashIcon, CheckIcon, XIcon } from '../../components/Icons/Icons';
+import { PencilIcon, TrashIcon, CheckIcon, XIcon, CopyIcon } from '../../components/Icons/Icons';
 import styles from './SessionListPage.module.css';
 
 function SessionListPage() {
@@ -60,6 +60,18 @@ function SessionListPage() {
       handleRenameConfirm();
     } else if (e.key === 'Escape') {
       handleRenameCancel();
+    }
+  };
+
+  const [cloningId, setCloningId] = useState<string | null>(null);
+  const handleClone = async (id: string) => {
+    if (cloningId) return;
+    setCloningId(id);
+    try {
+      const copy = await sessionService.clone(id);
+      navigate(`/sessions/${copy.id}`);
+    } catch {
+      setCloningId(null);
     }
   };
 
@@ -174,6 +186,16 @@ function SessionListPage() {
                     >
                       <PencilIcon size={14} />
                     </button>
+                    {session.session_type !== 'lean' && (
+                      <button
+                        className={styles.iconButton}
+                        disabled={cloningId === session.id}
+                        onClick={e => { e.stopPropagation(); handleClone(session.id); }}
+                        title="Clone session"
+                      >
+                        <CopyIcon size={14} />
+                      </button>
+                    )}
                     <button
                       className={`${styles.iconButton} ${styles.iconButtonDanger}`}
                       onClick={e => { e.stopPropagation(); handleDeleteStart(session.id); }}

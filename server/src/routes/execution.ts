@@ -4,6 +4,7 @@ import path from 'path';
 import db from '../db.js';
 import { resolveSessionCwd } from '../paths.js';
 import { executeFile } from '../services/execution.js';
+import { pythonEnv } from '../services/python-env.js';
 import fs from 'fs';
 import {
   isCmakeProject,
@@ -192,6 +193,12 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
 
     const absWorkingDir = sessionAbsDir(session.working_dir as string);
     const language = (file?.language as string) || (session.language as string);
+    // Bootstrap a venv for python sessions created before this feature (no .venv
+    // yet). Non-blocking: this run may use system python3, a later run uses the
+    // venv once it's ready.
+    if (language === 'python') {
+      pythonEnv.ensureVenv(req.params.id as string, session.working_dir as string, false);
+    }
     const isCpp = language === 'cpp';
     const isOcaml = language === 'ocaml';
     const useCmake = isCpp && isCmakeProject(absWorkingDir);
@@ -405,6 +412,19 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
       INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, peak_rss_bytes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(runId, req.params.id, file.id as string, result.command, result.exit_code, result.stdout, result.stderr, result.duration_ms, now, result.peak_rss_bytes);
+
+    // Provenance: once a python run succeeds, register the resolved uv.lock as a
+    // 'data' artifact (metadata only; the file already lives in the working dir
+    // and shows in the tree). One-time per session.
+    if (language === 'python' && result.exit_code === 0 && fs.existsSync(path.join(absWorkingDir, 'uv.lock'))) {
+      const exists = db.prepare("SELECT 1 FROM session_files WHERE session_id = ? AND filename = 'uv.lock'").get(req.params.id);
+      if (!exists) {
+        db.prepare(`
+          INSERT INTO session_files (id, session_id, filename, file_type, language, is_primary, created_at, updated_at)
+          VALUES (?, ?, 'uv.lock', 'data', '', 0, ?, ?)
+        `).run(uuidv4(), req.params.id, now, now);
+      }
+    }
 
     const run = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
     res.json(run);

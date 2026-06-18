@@ -11,6 +11,8 @@ import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
 import { sessionService } from '../../services/sessionService';
 import { leanService } from '../../services/leanService';
+import { pythonEnvService } from '../../services/pythonEnvService';
+import { parseMissingModule } from '../../utils/parseMissingModule';
 import { scribeService, type ScribeNode, type ScribeBook } from '../../services/claudeService';
 import CodeEditor from '../../components/CodeEditor/CodeEditor';
 import ClaudePanel from '../../components/ClaudePanel/ClaudePanel';
@@ -27,6 +29,7 @@ import CsvViewer from '../../components/CsvViewer/CsvViewer';
 import TerminalPane from '../../components/TerminalPane/TerminalPane';
 import BuildPanel from '../../components/BuildPanel/BuildPanel';
 import OutlinePanel from '../../components/OutlinePanel/OutlinePanel';
+import PackagesPanel from '../../components/PackagesPanel/PackagesPanel';
 import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
 import DebugPanel from '../../components/DebugPanel/DebugPanel';
@@ -52,11 +55,11 @@ import {
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { ExecutionRun, SessionLink, LakeStatus, LinkApp, RefType, isFreeformType } from '../../types';
+import { ExecutionRun, SessionLink, LakeStatus, VenvStatus, LinkApp, RefType, isFreeformType } from '../../types';
 import { formatBytes } from '../../utils/format';
 import styles from './SessionPage.module.css';
 
-type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'debug' | 'reference' | 'claude' | 'notes' | 'links';
+type NonLeanTab = 'output' | 'build' | 'artifacts' | 'outline' | 'asm' | 'variables' | 'packages' | 'debug' | 'reference' | 'claude' | 'notes' | 'links';
 type LeanTab = 'goalState' | 'messages' | 'reference' | 'claude' | 'notes' | 'links';
 
 const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
@@ -144,9 +147,19 @@ function SessionPage() {
   const [lakeStatus, setLakeStatus] = useState<LakeStatus>('initializing');
   const [buildOutput, setBuildOutput] = useState('');
 
+  // Per-session uv venv status (python / notebook sessions). null = no metadata
+  // (uv unavailable, or a freeform non-python session) → treated as system Python.
+  const [venvStatus, setVenvStatus] = useState<VenvStatus | null>(null);
+  // Bumped to force the Packages panel to re-fetch (e.g. after an install
+  // triggered from a ModuleNotFoundError affordance).
+  const [packagesRefresh, setPackagesRefresh] = useState(0);
+  // Module name currently being installed via the missing-module affordance.
+  const [installingModule, setInstallingModule] = useState<string | null>(null);
+
   const isLean = session?.session_type === 'lean';
   const isNotebook = session?.session_type === 'notebook';
   const isFreeform = !!session && isFreeformType(session.session_type);
+  const hasVenv = !!session && (session.session_type === 'python' || session.session_type === 'notebook');
 
   // User-controlled suspend toggle. When true, all WebSockets for this session
   // (Lean LSP, clangd, notebook kernel, terminal PTYs) are torn down; the
@@ -266,6 +279,9 @@ function SessionPage() {
       setLakeStatus(session.lean_meta.lake_status);
       setBuildOutput(session.lean_meta.last_build_output);
     }
+
+    // Load python venv metadata (absent when uv is unavailable)
+    setVenvStatus(session.python_meta?.venv_status ?? null);
 
     // Reopen the tabs that were open last time, dropping any whose file has
     // since been deleted. On first visit (no persisted record) fall back to the
@@ -489,6 +505,18 @@ function SessionPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [isLean, id, lakeStatus]);
+
+  // Poll venv status while it's being scaffolded (python / notebook)
+  useEffect(() => {
+    if (!hasVenv || !id || venvStatus !== 'initializing') return;
+    const interval = setInterval(async () => {
+      try {
+        const meta = await pythonEnvService.getMeta(id);
+        setVenvStatus(meta.venv_status);
+      } catch { /* */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasVenv, id, venvStatus]);
 
   // Use refs for LSP methods so callbacks stay stable
   const lspRef = useRef(lsp);
@@ -904,6 +932,19 @@ function SessionPage() {
     setTimeout(() => claudePromptFocusRef.current?.(), 100);
   };
 
+  // Install a package surfaced by a ModuleNotFoundError, then re-run. Used by
+  // the freeform Output affordance and (via onInstallPackage) by notebook cells.
+  const handleInstallMissing = useCallback(async (name: string): Promise<void> => {
+    if (!id) return;
+    setInstallingModule(name);
+    try {
+      await pythonEnvService.addPackage(id, name);
+      setPackagesRefresh(n => n + 1);
+    } finally {
+      setInstallingModule(null);
+    }
+  }, [id]);
+
   const handleApplyCode = useCallback((code: string) => {
     if (isNotebook) return; // would overwrite .ipynb JSON — user copies manually
     if (id && activeFileId) {
@@ -1089,6 +1130,9 @@ function SessionPage() {
   if (!session) return <div className={styles.error}>Session not found</div>;
 
   const latestRun = runs[0];
+  // Missing-package affordance for freeform python runs (notebooks handle this
+  // per-cell). null unless the last run failed with a ModuleNotFoundError.
+  const missingModule = hasVenv && !isNotebook ? parseMissingModule(latestRun?.stderr) : null;
 
   const activeFile = activeFileId ? session.files.find(f => f.id === activeFileId) : null;
   const activeFileExt = activeFile?.filename.split('.').pop()?.toLowerCase() ?? '';
@@ -1104,6 +1148,14 @@ function SessionPage() {
     : lakeStatus === 'building' ? 'warning'
     : 'default';
 
+  // Venv status badge variant + label
+  const venvStatusVariant = venvStatus === 'ready' ? 'success'
+    : venvStatus === 'error' ? 'danger'
+    : 'warning';
+  const venvStatusLabel = venvStatus === 'ready' ? 'venv'
+    : venvStatus === 'error' ? 'venv: error'
+    : 'venv: initializing';
+
   return (
     <div className={styles.page}>
       {!fullscreen && (
@@ -1114,6 +1166,9 @@ function SessionPage() {
           <Badge label={session.language} />
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />
+          )}
+          {hasVenv && venvStatus && (
+            <Badge label={venvStatusLabel} variant={venvStatusVariant} />
           )}
           {isCmakeProject && (
             <Badge label={`cmake: ${cmakeFlavorId}`} variant="default" />
@@ -1300,7 +1355,7 @@ function SessionPage() {
                   {!activeFileId ? (
                     <WelcomeScreen files={session.files} onOpenFile={openFile} />
                   ) : activeFileExt === 'ipynb' ? (
-                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} />
+                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} onInstallPackage={handleInstallMissing} />
                   ) : activeFileExt === 'csv' ? (
                     <CsvViewer sessionId={id!} fileId={activeFileId} />
                   ) : (
@@ -1532,6 +1587,14 @@ function SessionPage() {
                     onClick={() => setActiveTab('variables')}
                   >
                     Variables
+                  </button>
+                )}
+                {hasVenv && (
+                  <button
+                    className={`${styles.tab} ${activeTab === 'packages' ? styles.tabActive : ''}`}
+                    onClick={() => setActiveTab('packages')}
+                  >
+                    Packages
                   </button>
                 )}
                 {referenceSources.length > 0 && (
@@ -1886,6 +1949,15 @@ function SessionPage() {
                     {latestRun.stderr && (
                       <pre className={styles.stderr}>{latestRun.stderr}</pre>
                     )}
+                    {missingModule && (
+                      <button
+                        className={styles.installMissingButton}
+                        disabled={installingModule !== null}
+                        onClick={async () => { await handleInstallMissing(missingModule); handleExecute(); }}
+                      >
+                        {installingModule === missingModule ? `Installing ${missingModule}…` : `Install '${missingModule}' & re-run`}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className={styles.placeholder}>Run your code to see output here</div>
@@ -1905,6 +1977,11 @@ function SessionPage() {
                   </div>
                 )}
               </div>
+            )}
+
+            {/* Packages: uv project dependency management (python / notebook) */}
+            {activeTab === 'packages' && hasVenv && (
+              <PackagesPanel sessionId={id!} refreshKey={packagesRefresh} />
             )}
 
             {/* Reference: embedded API docs (numpy/pandas/cppreference/...) */}

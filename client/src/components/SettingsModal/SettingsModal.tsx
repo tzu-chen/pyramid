@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { settingsService } from '../../services/claudeService';
 import { claudeService } from '../../services/claudeService';
+import { pythonEnvService } from '../../services/pythonEnvService';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { useEditorVimMode } from '../../contexts/EditorVimModeContext';
@@ -75,6 +76,8 @@ function ShortcutRow({ action, label, scope }: { action: KeybindingAction; label
 
 const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
 
+const PYTHON_VERSION_OPTIONS = ['', '3.14', '3.13', '3.12', '3.11', '3.10'];
+
 const CLAUDE_MODEL_OPTIONS: Array<{ id: string; label: string }> = [
   { id: 'claude-opus-4-7', label: 'Opus 4.7 (default)' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -96,6 +99,10 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
   const [model, setModel] = useState<string>(DEFAULT_CLAUDE_MODEL);
+  const [pyVersion, setPyVersion] = useState('');
+  const [uvCacheDir, setUvCacheDir] = useState('');
+  const [pruning, setPruning] = useState(false);
+  const [pruneMsg, setPruneMsg] = useState('');
 
   const overlayMouseDownRef = useRef(false);
 
@@ -110,7 +117,31 @@ function SettingsModal({ onClose }: SettingsModalProps) {
         setModel(setting.value);
       }
     }).catch(() => {});
+    settingsService.get('python_default_version').then(s => { if (s?.value) setPyVersion(s.value); }).catch(() => {});
+    settingsService.get('uv_cache_dir').then(s => { if (s?.value) setUvCacheDir(s.value); }).catch(() => {});
   }, []);
+
+  const handlePyVersionChange = async (next: string) => {
+    setPyVersion(next);
+    try { await settingsService.set('python_default_version', next); } catch { /* retry by reselecting */ }
+  };
+
+  const handleCacheDirSave = async () => {
+    try { await settingsService.set('uv_cache_dir', uvCacheDir.trim()); } catch { /* */ }
+  };
+
+  const handlePrune = async () => {
+    setPruning(true);
+    setPruneMsg('');
+    try {
+      await pythonEnvService.pruneCache();
+      setPruneMsg('uv cache pruned.');
+    } catch (err) {
+      setPruneMsg((err as Error).message);
+    } finally {
+      setPruning(false);
+    }
+  };
 
   const handleModelChange = async (next: string) => {
     setModel(next);
@@ -376,6 +407,46 @@ function SettingsModal({ onClose }: SettingsModalProps) {
             {testResult === 'error' && (
               <div className={styles.testError}>{testError}</div>
             )}
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>Python</h3>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>Default version</span>
+                <span className={styles.rowDesc}>Interpreter for new python / notebook sessions when none is chosen</span>
+              </div>
+              <select
+                className={styles.modelSelect}
+                value={pyVersion}
+                onChange={e => handlePyVersionChange(e.target.value)}
+              >
+                {PYTHON_VERSION_OPTIONS.map(v => (
+                  <option key={v || 'default'} value={v}>{v ? v : 'Default (3.12)'}</option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>uv cache directory</span>
+                <span className={styles.rowDesc}>Optional shared download cache (UV_CACHE_DIR). Blank uses uv's default.</span>
+              </div>
+            </div>
+            <div className={styles.keyRow}>
+              <input
+                className={styles.keyInput}
+                type="text"
+                value={uvCacheDir}
+                onChange={e => setUvCacheDir(e.target.value)}
+                onBlur={handleCacheDirSave}
+                placeholder="(uv default ~/.cache/uv)"
+              />
+              <button className={styles.saveBtn} onClick={handleCacheDirSave}>Save</button>
+            </div>
+            <button className={styles.testBtn} onClick={handlePrune} disabled={pruning}>
+              {pruning ? 'Pruning…' : 'Prune uv cache'}
+            </button>
+            {pruneMsg && <div className={styles.testSuccess}>{pruneMsg}</div>}
           </section>
         </div>
         )}

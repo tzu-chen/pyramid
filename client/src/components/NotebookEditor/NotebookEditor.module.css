@@ -416,3 +416,19 @@
   margin: 0;
 }
 
+.installMissingButton {
+  align-self: flex-start;
+  margin-top: var(--space-2, 8px);
+  padding: 3px 10px;
+  background-color: var(--color-primary);
+  color: var(--color-primary-text);
+  border: none;
+  border-radius: var(--radius-md, 6px);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.installMissingButton:hover:not(:disabled) { background-color: var(--color-primary-hover); }
+.installMissingButton:disabled { opacity: 0.6; cursor: default; }
+

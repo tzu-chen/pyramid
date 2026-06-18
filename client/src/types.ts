@@ -79,10 +79,45 @@ export interface LeanSessionMeta {
   absolute_project_path?: string;
 }
 
+export type VenvStatus = 'initializing' | 'ready' | 'error';
+
+export interface PythonSessionMeta {
+  id: string;
+  session_id: string;
+  python_version: string;
+  venv_status: VenvStatus;
+  error_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeclaredDep {
+  name: string;
+  group: 'main' | 'dev';
+  spec: string;
+}
+
+export interface InstalledPackage {
+  name: string;
+  version: string;
+}
+
+export interface PackageList {
+  declared: DeclaredDep[];
+  installed: InstalledPackage[];
+  lockPresent: boolean;
+}
+
+export interface PythonManifest {
+  pyproject: string;
+  lock: string | null;
+}
+
 export interface SessionDetail extends Session {
   files: SessionFile[];
   runs: ExecutionRun[];
   lean_meta?: LeanSessionMeta;
+  python_meta?: PythonSessionMeta;
   absolute_working_dir?: string;
 }
 

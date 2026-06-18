@@ -15,6 +15,7 @@ import leanRouter from './routes/lean.js';
 import claudeRouter from './routes/claude.js';
 import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
+import pythonEnvRouter from './routes/python-env.js';
 import godboltRouter from './routes/godbolt.js';
 import backendsRouter from './routes/backends.js';
 import { leanLsp } from './services/lean-lsp.js';
@@ -24,6 +25,7 @@ import { ocamlLsp } from './services/ocaml-lsp.js';
 import { ocamlProject } from './services/ocaml-project.js';
 import { ocamlDap } from './services/ocaml-dap.js';
 import { notebookKernel } from './services/notebook-kernel.js';
+import { pythonEnv } from './services/python-env.js';
 import { terminal } from './services/terminal.js';
 import { isFreeformType } from './session-types.js';
 
@@ -43,6 +45,7 @@ app.use('/api/lean', leanRouter);
 app.use('/api/sessions', claudeRouter);
 app.use('/api/scribe', scribeProxyRouter);
 app.use('/api/notebooks', notebooksRouter);
+app.use('/api/python-env', pythonEnvRouter);
 app.use('/api/godbolt', godboltRouter);
 app.use('/api/backends', backendsRouter);
 
@@ -146,6 +149,10 @@ server.on('upgrade', (request, socket, head) => {
     if (!session || session.session_type !== 'notebook') { socket.destroy(); return; }
     wss.handleUpgrade(request, socket, head, (ws) => {
       const cwd = resolveSessionCwd(session.working_dir);
+      // Bootstrap a venv (with ipykernel) for notebooks created before this
+      // feature landed. Non-blocking: the first kernel start may use system
+      // python3, a later restart picks up the venv.
+      pythonEnv.ensureVenv(sessionId, session.working_dir, true);
       notebookKernel.handleWebSocket(ws, sessionId, cwd);
     });
     return;

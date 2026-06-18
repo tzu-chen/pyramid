@@ -14,12 +14,20 @@ const LANGUAGE_FOR_TYPE: Record<SessionType, string> = {
   lean: 'lean',
 };
 
+// Offered interpreter versions for python/notebook sessions. '' = server default
+// (the python_default_version setting, falling back to 3.12). uv downloads a
+// managed build on demand if the version isn't already installed.
+const PYTHON_VERSIONS = ['', '3.14', '3.13', '3.12', '3.11', '3.10'];
+
 function NewSessionPage() {
   const navigate = useNavigate();
   const [sessionType, setSessionType] = useState<SessionType>('python');
   const [title, setTitle] = useState('');
+  const [pythonVersion, setPythonVersion] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+
+  const showVersionPicker = sessionType === 'python' || sessionType === 'notebook';
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -35,6 +43,7 @@ function NewSessionPage() {
         title: title.trim(),
         session_type: sessionType,
         language: LANGUAGE_FOR_TYPE[sessionType],
+        python_version: showVersionPicker && pythonVersion ? pythonVersion : undefined,
       });
       navigate(`/sessions/${session.id}`);
     } catch (err) {
@@ -87,6 +96,21 @@ function NewSessionPage() {
             }
           />
         </div>
+
+        {showVersionPicker && (
+          <div className={styles.field}>
+            <label className={styles.label}>Python Version</label>
+            <select
+              className={styles.input}
+              value={pythonVersion}
+              onChange={e => setPythonVersion(e.target.value)}
+            >
+              {PYTHON_VERSIONS.map(v => (
+                <option key={v || 'default'} value={v}>{v ? v : 'Default'}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error && <div className={styles.error}>{error}</div>}
 

@@ -13,6 +13,8 @@ import { ocamlProject } from '../services/ocaml-project.js';
 import { ocamlDap } from '../services/ocaml-dap.js';
 import { symlinkPath } from '../services/bc-fixup.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
+import { pythonEnv } from '../services/python-env.js';
+import { IGNORED_NAMES } from './files.js';
 import { terminal } from '../services/terminal.js';
 import { isFreeformType, languageForType } from '../session-types.js';
 
@@ -104,6 +106,11 @@ router.get('/:id', (req: Request, res: Response) => {
       }
     }
 
+    if (session.session_type === 'python' || session.session_type === 'notebook') {
+      const pyMeta = db.prepare('SELECT * FROM python_session_meta WHERE session_id = ?').get(req.params.id);
+      if (pyMeta) result.python_meta = pyMeta;
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -113,7 +120,7 @@ router.get('/:id', (req: Request, res: Response) => {
 // POST /api/sessions
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, session_type = 'python', tags = [], links = [] } = req.body;
+    const { title, session_type = 'python', tags = [], links = [], python_version } = req.body;
 
     if (!title) {
       res.status(400).json({ error: 'Title is required' });
@@ -197,7 +204,86 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
+    // Python / notebook: scaffold a uv project (pyproject + uv.lock + .venv) in
+    // the background (no-op if uv is absent — execution falls back to system
+    // python3). Notebooks add ipykernel as a dev dep so the kernel can launch
+    // from the venv. Interpreter version: request → global setting → default.
+    if ((session_type === 'python' || session_type === 'notebook') && pythonEnv.uvAvailable()) {
+      const metaId = uuidv4();
+      const version = pythonEnv.resolvePythonVersion(python_version);
+      db.prepare(`
+        INSERT INTO python_session_meta (id, session_id, python_version, venv_status, created_at, updated_at)
+        VALUES (?, ?, ?, 'initializing', ?, ?)
+      `).run(metaId, id, version, now, now);
+
+      pythonEnv.scaffoldProject(id, workingDir, session_type === 'notebook', version).catch((err) => {
+        console.error(`Failed to scaffold venv for session ${id}:`, err);
+      });
+    }
+
     const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown>;
+    res.status(201).json(formatSession(session));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/clone — duplicate a session: row + file metadata +
+// working-dir contents (minus .venv/build/caches). For python/notebook the venv
+// is rebuilt in the background from the copied uv.lock (exact via `uv sync`).
+router.post('/:id/clone', (req: Request, res: Response) => {
+  try {
+    const src = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as Record<string, unknown> | undefined;
+    if (!src) { res.status(404).json({ error: 'Session not found' }); return; }
+    if (src.session_type === 'lean') {
+      res.status(400).json({ error: 'Lean sessions cannot be cloned (Lake project is session-specific)' });
+      return;
+    }
+
+    const newId = uuidv4();
+    const now = getCstTimestamp();
+    const newWorkingDir = path.join('sessions', newId);
+    const srcAbs = resolveSessionCwd(src.working_dir as string);
+    const dstAbs = resolveSessionCwd(newWorkingDir);
+
+    // Copy the working tree, skipping virtualenvs / build / cache dirs.
+    fs.mkdirSync(dstAbs, { recursive: true });
+    if (fs.existsSync(srcAbs)) {
+      fs.cpSync(srcAbs, dstAbs, {
+        recursive: true,
+        filter: (s) => !IGNORED_NAMES.has(path.basename(s)),
+      });
+    }
+
+    db.prepare(`
+      INSERT INTO sessions (id, title, session_type, language, tags, status, links, notes, working_dir, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    `).run(newId, `Copy of ${src.title}`, src.session_type, src.language, src.tags, src.links, src.notes, newWorkingDir, now, now);
+
+    // Duplicate file metadata rows (content already copied on disk).
+    const files = db.prepare('SELECT * FROM session_files WHERE session_id = ?').all(req.params.id) as Record<string, unknown>[];
+    for (const f of files) {
+      db.prepare(`
+        INSERT INTO session_files (id, session_id, filename, file_type, language, is_primary, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(uuidv4(), newId, f.filename, f.file_type, f.language, f.is_primary, now, now);
+    }
+
+    // Python/notebook: rebuild the venv from the copied uv.lock in the background.
+    if ((src.session_type === 'python' || src.session_type === 'notebook') && pythonEnv.uvAvailable()) {
+      const srcMeta = db.prepare('SELECT python_version FROM python_session_meta WHERE session_id = ?')
+        .get(req.params.id) as { python_version: string } | undefined;
+      const version = pythonEnv.resolvePythonVersion(srcMeta?.python_version);
+      db.prepare(`
+        INSERT INTO python_session_meta (id, session_id, python_version, venv_status, created_at, updated_at)
+        VALUES (?, ?, ?, 'initializing', ?, ?)
+      `).run(uuidv4(), newId, version, now, now);
+      pythonEnv.scaffoldProject(newId, newWorkingDir, src.session_type === 'notebook', version).catch((err) => {
+        console.error(`Failed to rebuild venv for cloned session ${newId}:`, err);
+      });
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(newId) as Record<string, unknown>;
     res.status(201).json(formatSession(session));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

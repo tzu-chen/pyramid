@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import type { WebSocket } from 'ws';
 
@@ -64,9 +65,20 @@ export const notebookKernel = {
     const existing = processes.get(sessionId);
     if (existing) return existing;
 
+    // Run the kernel from the session's uv venv when present so notebook
+    // imports match freeform execution; the bridge itself stays on system
+    // python3. Falls back to the bridge's interpreter when there's no venv.
+    const env: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      PYRAMID_NOTEBOOK_CWD: cwd,
+      PYTHONUNBUFFERED: '1',
+    };
+    const venvPython = path.join(cwd, '.venv', 'bin', 'python');
+    if (fs.existsSync(venvPython)) env.PYRAMID_VENV_PYTHON = venvPython;
+
     const proc = spawn('python3', [BRIDGE_SCRIPT], {
       cwd,
-      env: { ...process.env, PYRAMID_NOTEBOOK_CWD: cwd, PYTHONUNBUFFERED: '1' },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { sampleProcessMemory } from './proc-memory.js';
 
@@ -56,6 +57,14 @@ function getCommandString(filename: string, language: string): string {
   }
 }
 
+// Resolve the interpreter for a Python session: the per-session uv venv if it
+// exists, else system python3. Kept here (rather than importing python-env) so
+// execution stays a leaf module; the path contract is the same.
+function pythonBin(absWorkingDir: string): string | null {
+  const p = path.join(absWorkingDir, '.venv', 'bin', 'python');
+  return fs.existsSync(p) ? p : null;
+}
+
 export async function executeFile(
   workingDir: string,
   filename: string,
@@ -63,8 +72,19 @@ export async function executeFile(
   options: ExecutionOptions = {}
 ): Promise<ExecutionResult> {
   const timeoutMs = options.timeout_ms || 30000;
-  const { cmd, args } = getCommand(filename, language);
-  const commandStr = getCommandString(filename, language);
+  let { cmd, args } = getCommand(filename, language);
+  let commandStr = getCommandString(filename, language);
+
+  // Python: prefer the session venv so installs/isolation take effect. Falls
+  // back to the system python3 from getCommand when no venv is present.
+  if (language === 'python') {
+    const venv = pythonBin(path.resolve(workingDir));
+    if (venv) {
+      cmd = venv;
+      args = [filename];
+      commandStr = `.venv/bin/python ${filename}`;
+    }
+  }
 
   return new Promise((resolve) => {
     const startTime = Date.now();
