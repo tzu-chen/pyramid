@@ -32,19 +32,23 @@ router.get('/overview', (_req: Request, res: Response) => {
 router.get('/heatmap', (req: Request, res: Response) => {
   try {
     const { start, end } = req.query;
+    // Bucket by CST (UTC-6 fixed) calendar date, not UTC — created_at is stored
+    // with a -06:00 offset, and SQLite's DATE() would otherwise normalize to UTC
+    // and push evening runs onto the next day. Matches the app's CST convention.
+    const cstDate = "DATE(created_at, '-6 hours')";
     let query = `
-      SELECT DATE(created_at) as date, COUNT(*) as count
+      SELECT ${cstDate} as date, COUNT(*) as count
       FROM execution_runs
     `;
     const params: unknown[] = [];
 
     if (start || end) {
       query += ' WHERE 1=1';
-      if (start) { query += ' AND DATE(created_at) >= ?'; params.push(start); }
-      if (end) { query += ' AND DATE(created_at) <= ?'; params.push(end); }
+      if (start) { query += ` AND ${cstDate} >= ?`; params.push(start); }
+      if (end) { query += ` AND ${cstDate} <= ?`; params.push(end); }
     }
 
-    query += ' GROUP BY DATE(created_at) ORDER BY date';
+    query += ` GROUP BY ${cstDate} ORDER BY date`;
     const rows = db.prepare(query).all(...params);
     res.json(rows);
   } catch (err) {

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useSessions } from '../../hooks/useSessions';
 import { useDebounce } from '../../hooks/useDebounce';
 import { sessionService } from '../../services/sessionService';
+import { SessionStatus } from '../../types';
 import Badge from '../../components/Badge/Badge';
 import { PencilIcon, TrashIcon, CheckIcon, XIcon, CopyIcon } from '../../components/Icons/Icons';
 import styles from './SessionListPage.module.css';
@@ -17,6 +18,7 @@ function SessionListPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [statusEditingId, setStatusEditingId] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const params = useMemo(() => ({
@@ -95,6 +97,16 @@ function SessionListPage() {
     setDeletingId(null);
   };
 
+  const handleStatusChange = async (id: string, status: SessionStatus) => {
+    setStatusEditingId(null);
+    try {
+      await sessionService.updateStatus(id, status);
+      refresh();
+    } catch {
+      // leave status unchanged on error
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -115,6 +127,7 @@ function SessionListPage() {
           <option value="python">Python</option>
           <option value="cpp">C++</option>
           <option value="ocaml">OCaml</option>
+          <option value="rust">Rust</option>
           <option value="julia">Julia</option>
           <option value="notebook">Notebook</option>
           <option value="lean">Lean</option>
@@ -167,8 +180,35 @@ function SessionListPage() {
                       )}
                       <div className={styles.sessionMeta}>
                         <Badge label={session.session_type} variant={session.session_type} />
-                        <Badge label={session.language} />
-                        <Badge label={session.status} variant={session.status === 'active' ? 'success' : session.status === 'archived' ? 'default' : 'warning'} />
+                        {statusEditingId === session.id ? (
+                          <select
+                            className={styles.statusSelect}
+                            value={session.status}
+                            autoFocus
+                            onClick={e => e.stopPropagation()}
+                            onChange={e => handleStatusChange(session.id, e.target.value as SessionStatus)}
+                            onBlur={() => setStatusEditingId(null)}
+                          >
+                            <option value="active">active</option>
+                            <option value="paused">paused</option>
+                            <option value="completed">completed</option>
+                            <option value="archived">archived</option>
+                          </select>
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.statusBadgeButton}
+                            title="Change status"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setStatusEditingId(session.id);
+                              setRenamingId(null);
+                              setDeletingId(null);
+                            }}
+                          >
+                            <Badge label={session.status} variant={session.status === 'active' ? 'success' : session.status === 'archived' ? 'default' : 'warning'} />
+                          </button>
+                        )}
                         {session.tags.map(tag => (
                           <Badge key={tag} label={tag} />
                         ))}

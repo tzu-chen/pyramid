@@ -1439,7 +1439,6 @@ function SessionPage() {
         <div className={styles.toolbarLeft}>
           <h2 className={styles.sessionTitle}>{session.title}</h2>
           <Badge label={session.session_type} variant={session.session_type} />
-          <Badge label={session.language} />
           {isLean && (
             <Badge label={lakeStatus} variant={lakeStatusVariant} />
           )}

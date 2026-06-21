@@ -15,13 +15,15 @@ function Heatmap({ data }: HeatmapProps) {
       if (entry.count > max) max = entry.count;
     }
 
-    // Generate last 90 days
+    // Generate last 90 days, keyed by CST (UTC-6 fixed) date to match the
+    // server's bucketing and the app's CST convention (works on any device,
+    // independent of the viewer's local timezone).
+    const CST_OFFSET_MS = 6 * 60 * 60 * 1000;
+    const cstDateStr = (ms: number) => new Date(ms - CST_OFFSET_MS).toISOString().split('T')[0];
     const cells: { date: string; count: number }[] = [];
-    const today = new Date();
+    const nowMs = Date.now();
     for (let i = 89; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = cstDateStr(nowMs - i * 24 * 60 * 60 * 1000);
       cells.push({ date: dateStr, count: map.get(dateStr) || 0 });
     }
 

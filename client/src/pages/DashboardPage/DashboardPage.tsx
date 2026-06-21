@@ -67,7 +67,6 @@ function DashboardPage() {
                   <span className={styles.sessionTitle}>{session.title}</span>
                   <div className={styles.sessionMeta}>
                     <Badge label={session.session_type} variant={session.session_type} />
-                    <Badge label={session.language} />
                   </div>
                 </div>
                 <span className={styles.sessionDate}>
