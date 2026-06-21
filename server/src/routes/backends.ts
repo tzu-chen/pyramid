@@ -53,7 +53,7 @@ const BACKENDS: BackendDef[] = [
     command: 'julia',
     args: ['--version'],
     category: 'language',
-    used_for: ['Freeform Julia sessions'],
+    used_for: ['Freeform Julia sessions', 'LanguageServer.jl LSP', 'Pkg environments', 'precompile/test'],
     versionRegex: /julia version\s+([\d.+\w-]+)/i,
   },
   {

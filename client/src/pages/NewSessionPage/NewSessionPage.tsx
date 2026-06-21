@@ -58,7 +58,7 @@ function NewSessionPage() {
     { value: 'cpp', label: 'C++', description: 'C++ with clangd, CMake builds, and Compiler Explorer' },
     { value: 'ocaml', label: 'OCaml', description: 'OCaml with ocamllsp, dune builds, and debugger' },
     { value: 'rust', label: 'Rust', description: 'Rust with rust-analyzer, Cargo builds/tests, clippy, crates, and debugger' },
-    { value: 'julia', label: 'Julia', description: 'Single-file Julia computation and experimentation' },
+    { value: 'julia', label: 'Julia', description: 'Julia with LanguageServer.jl, Pkg environments, and precompile/test' },
     { value: 'notebook', label: 'Notebook', description: 'Jupyter notebook with cell-by-cell execution (Python)' },
     { value: 'lean', label: 'Lean', description: 'Formal proof writing in Lean 4' },
   ];

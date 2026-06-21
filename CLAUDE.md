@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repo.
 
 ## Project Overview
 
-Pyramid is a **computational workbench** for **Lean 4 proof development**, **freeform numerical/scientific computation** (Python/Julia/C++/OCaml/Rust, with full LSP + build-system support for C++ via clangd/CMake, Rust via rust-analyzer/Cargo, and OCaml via ocamllsp/dune), and **Jupyter-style notebooks**, usable from any device including iPad. Built-in **Claude AI** for error diagnosis, formalization, and implementation help. **Sessions** are the core abstraction — each bundles code, outputs, notes, and provenance links into a logged, searchable unit.
+Pyramid is a **computational workbench** for **Lean 4 proof development**, **freeform numerical/scientific computation** (Python/Julia/C++/OCaml/Rust, with full LSP + build-system support for C++ via clangd/CMake, Rust via rust-analyzer/Cargo, OCaml via ocamllsp/dune, and Julia via LanguageServer.jl/Pkg), and **Jupyter-style notebooks**, usable from any device including iPad. Built-in **Claude AI** for error diagnosis, formalization, and implementation help. **Sessions** are the core abstraction — each bundles code, outputs, notes, and provenance links into a logged, searchable unit.
 
 The Lean and C++ experiences are the two most distinctive features. Both ride the same generic **LSP bridge** (`lsp-bridge.ts`): the backend spawns a language server (`lean --server` or `clangd`) per session and proxies LSP JSON-RPC over WebSocket. C++ sessions additionally get a CMake build/run pipeline, artifact browser, document outline, and Compiler Explorer integration.
 
@@ -61,6 +61,10 @@ server/src/
     rust-dap.ts        thin wrapper: spawns `lldb-dap` (over the generic DAP bridge)
     cargo-build.ts     Cargo build/run/test/clippy (JSON diagnostics), artifact tree
     cargo-env.ts       Cargo dependency mgmt (`cargo add`/`remove`/`metadata`)
+    julia-lsp.ts       thin wrapper: spawns LanguageServer.jl (shared LS env, readiness-gated)
+    julia-project.ts   Project.toml scaffold + shared LanguageServer.jl env install
+    julia-env.ts       Pkg dependency mgmt (`Pkg.add`/`rm`, Project.toml/Manifest.toml)
+    julia-build.ts     Pkg precompile/test + Julia stacktrace→diagnostic parser
     execution.ts       single-file Python/Julia/C++/Rust child-process runner
     notebook-kernel.ts Jupyter kernel lifecycle + WS relay
     jupyter-bridge.py  Python sidecar driving ipykernel; JSON-lines on stdio
@@ -130,6 +134,20 @@ Rust is **Cargo-by-default** (unlike C++/OCaml, which start single-file): `rust-
 
 **Debugging (`rust-dap.ts`)** — debug-profile builds are native binaries with DWARF, so debugging points straight at `target/debug/<bin>` — **no bytecode/path-translation dance** (unlike OCaml/earlybird). Prefers `lldb-dap` (else `lldb-vscode`) over the generic `DapBridge` (relay `/ws/debug/:sessionId`, shared with OCaml — branches on language). Reuses `DebugPanel`/`useDapSession`/`VariableInspector`; targets from `GET /sessions/:id/debug/binaries`. Degrades gracefully (emits a "no lldb DAP adapter" message) when no adapter is installed.
 
+## Julia Integration
+
+Julia is a freeform language with an LSP, a per-session Pkg environment, and a precompile/test pipeline (no debugger — interpreted-mode Julia debugging is slow/heavy; deferred). All four mirror the C++/Rust patterns.
+
+* **Project scaffold (`julia-project.ts`)** — `ensureJuliaProject(dir)` marks the session dir as a Pkg environment by writing an (empty/comment-only) `Project.toml`. Fast and offline — **no `julia` subprocess** (unlike `cargo init`); an empty Project.toml is a valid environment that `Pkg.add` fills in. Idempotent; runs on create (`sessions.ts`) and on every `/ws/julia` connect, so old sessions get promoted. The primary file is the real `main.jl`.
+
+* **LanguageServer.jl LSP (`julia-lsp.ts`)** — thin wrapper over `LspBridge` (relay `/ws/julia/:sessionId`, gated `session_type==='julia'`). LanguageServer.jl must run in its **own dedicated environment**, separate from the user's project (exactly like the VSCode Julia extension): `julia-project.ts` installs it **once** into a shared env at `$DATA_DIR/julia-lsp-env/` (`Pkg.add("LanguageServer")`) and reuses it across all sessions (same spirit as the shared Mathlib cache). The server runs in that env (`--project`) and analyses the session dir, passed as `ARGS[1]` to dodge `-e` string quoting: `julia --project=<LS_ENV> -e 'using LanguageServer; run(LanguageServerInstance(stdin, stdout, ARGS[1]))' -- <session>`. First-time install is slow, so the wrapper is **readiness-gated**: until the shared env is ready it sends the client a `window/logMessage` and closes; the `useJuliaLsp` 3s reconnect loop retries until install lands. Client uses didOpen/didChange, publishDiagnostics, completion, hover, `textDocument/documentSymbol`→`OutlinePanel` (the shared `DocumentSymbol` LSP shape). Degrades gracefully when `julia` is absent.
+
+* **Env activation on run** — when a `Project.toml` exists, `execution.ts` runs `julia --project=. <file>` instead of bare `julia <file>`, so added packages are available — mirroring how Python prefers its venv.
+
+* **Pkg dependency management (`julia-env.ts`)** — the Pkg.jl analog of `cargo-env.ts`, mapped onto the (generalized) `PackagesPanel`. `Pkg.add`/`Pkg.rm` (package passed via `ARGS` to avoid quoting); declared deps parsed from `Project.toml` `[deps]`/`[extras]` (+ `[compat]` specs); installed/resolved versions parsed from `Manifest.toml` (handles manifest_format 1.0 `[[Name]]` and 2.0 `[[deps.Name]]`); `Manifest.toml` = lock indicator. No main/dev split in basic Pkg, so the panel's `dev` toggle is hidden (`allowDev={false}`). Routes under `/api/julia-env/:sessionId/{packages,manifest}` (manifest = `Project.toml`; PUT validates via `Pkg.resolve()`).
+
+* **Precompile/test pipeline (`julia-build.ts`)** — the interpreted analog of `cargo build`/`test`; there's no session-local binary (compiled caches live in the global depot), so `binaryPaths` is always `[]`. `precompile` → `Pkg.precompile()`; `test` → runs `test/runtests.jl` directly if present (avoids `Pkg.test()`'s named-package requirement), else `Pkg.test()`. Julia emits **no structured diagnostics** (unlike cargo's JSON), so a **regex stacktrace parser** extracts `file:line` from `ERROR: [LoadError:]`, `in expression starting at`, stack frames `@ Module file.jl:line`, `Test Failed at`, and `┌ Warning … └ @`. **Only session-local files are surfaced** — a path being relative isn't enough (Julia prints stdlib frames as `./Base.jl`), so the parser requires the resolved file to **exist inside the session dir**. Results persist to the shared `builds`/`build_diagnostics` tables (`flavor` = `'precompile'`/`'test'`) and feed `BuildPanel`. Routes: `/sessions/:id/julia/{status,build,builds[/:buildId]}`.
+
 ## Other Session Types
 
 * **Notebook** — single `.ipynb` in the working dir (edited as JSON, written via the file-content endpoint; no schema beyond `session_files`). `notebook-kernel.ts` spawns one `jupyter-bridge.py` per session driving `ipykernel`, JSON-lines on stdio, relayed over `/ws/notebook/:sessionId`; idle 30 min. `GET .../kernel` (running), `POST .../kernel/stop` (force restart).
@@ -162,20 +180,21 @@ SQLite, WAL, FKs on; created/migrated at runtime by `db.ts`. snake_case columns,
 
 All under `/api`, RESTful, parameterized SQL only, route-level try-catch. Errors: `{ error: msg }` with 201/400/404/409/413(godbolt cap)/500/502(Scribe/godbolt upstream). Browse `server/src/routes/` for exact shapes; notable contracts:
 
-* **Sessions** — `GET /sessions` (filters: `session_type`, `status`, `language`, `tag`, `search`=FTS5); `GET/PUT/DELETE /sessions/:id` (GET returns files + type data + recent runs + absolute cwd; DELETE also stops LSP/kernel/terminal/Lean project); `POST /sessions` derives `language`, and per type: `lean`→scaffold Lake (bg), `notebook`→seed `.ipynb`, `cpp`→`.clangd`, `ocaml`→`.ocamlformat`/`.merlin`, `rust`→`cargo init` (sync; `src/main.rs` primary); `PATCH /sessions/:id/status`.
+* **Sessions** — `GET /sessions` (filters: `session_type`, `status`, `language`, `tag`, `search`=FTS5); `GET/PUT/DELETE /sessions/:id` (GET returns files + type data + recent runs + absolute cwd; DELETE also stops LSP/kernel/terminal/Lean project); `POST /sessions` derives `language`, and per type: `lean`→scaffold Lake (bg), `notebook`→seed `.ipynb`, `cpp`→`.clangd`, `ocaml`→`.ocamlformat`/`.merlin`, `rust`→`cargo init` (sync; `src/main.rs` primary), `julia`→empty `Project.toml` (sync, offline); `PATCH /sessions/:id/status`.
 * **Files/folders** — under `/sessions/:id`: `files` (list/create — filename may include subdirs), `tree`, `files/:fileId` (GET/PATCH rename-move/DELETE), `files/:fileId/content` (GET/PUT), `folders` (POST/PATCH/DELETE), `upload` (multer multipart).
 * **Execute** — `POST /sessions/:id/execute`: C++-with-CMake takes `{ flavor, target?, args?, stdin?, reconfigure?, timeout_ms? }` and returns `{ kind: 'ran'|'build_failed'|'no_binary', build_id, flavor, diagnostics, log, run? }`; single-file takes `{ file_id?, timeout_ms?, stdin? }` and returns the run row. `GET /sessions/:id/runs[/:runId]`.
 * **CMake** — `/sessions/:id/cmake/`: `status`, `configure`, `build` (persists builds+diagnostics), `builds[/:buildId]`, `binaries` (`?buildType&sanitizers`), `artifacts`, `artifacts/content?path=`, `artifacts/download?path=`, `clean` (`{all:true}` or `{flavor}`).
 * **Cargo** (Rust) — `/sessions/:id/cargo/`: `status`, `build`, `clippy`, `test`, `builds[/:buildId]`, `binaries` (`?profile`), `artifacts[/content|/download]`, `clean`. Dependency mgmt under `/cargo-env/:sessionId/{packages,manifest}`. (OCaml has the parallel `/sessions/:id/dune/*`.) `GET /sessions/:id/debug/binaries` is shared by OCaml + Rust (branches on language).
+* **Julia** — `/sessions/:id/julia/`: `status`, `build` (`{mode:'precompile'|'test'}`), `builds[/:buildId]` (no artifacts — Julia has no session-local binary). Dependency mgmt under `/julia-env/:sessionId/{packages,manifest}` (manifest = `Project.toml`).
 * **Lean** — `/lean/:sessionId/`: `meta`, `build`, `build-output`; WS `/ws/lean/:sessionId`.
 * **Notebooks** — `/notebooks/:sessionId/kernel` (GET running, POST `kernel/stop`); WS `/ws/notebook/:sessionId`.
-* **WS** — `/ws/cpp/:sessionId` (gated `language==='cpp'`, drops `.clangd`), `/ws/rust/:sessionId` (gated `'rust'`, ensures Cargo package), `/ws/debug/:sessionId` (OCaml earlybird / Rust lldb, branches on language), `/ws/terminal/:sessionId/:tabId`.
+* **WS** — `/ws/cpp/:sessionId` (gated `language==='cpp'`, drops `.clangd`), `/ws/rust/:sessionId` (gated `'rust'`, ensures Cargo package), `/ws/julia/:sessionId` (gated `'julia'`, ensures `Project.toml`, readiness-gated on the shared LanguageServer.jl env), `/ws/debug/:sessionId` (OCaml earlybird / Rust lldb, branches on language), `/ws/terminal/:sessionId/:tabId`.
 * **Godbolt** — `/godbolt/compilers`, `/godbolt/compile`.
 * **Claude** — `POST /sessions/:id/claude/ask` `{ prompt, context: [{label, content}], mode }` → `{ response, input_tokens, output_tokens }`.
 * **Scribe proxy** — `/scribe/flowcharts`, `/scribe/nodes/search?title=`, `/scribe/nodes/:flowchartId/:nodeKey`.
 * **Stats/settings/health** — `/stats/{overview,heatmap,languages}`, `/settings[/:key]` (incl. `claude_api_key`), `/health`.
 
-**Execution service** (`execution.ts`, single-file): own cwd per session; timeout 30s single-file / 120s CMake·dune·Cargo (SIGTERM + 2s SIGKILL); stdout/stderr truncated to 1 MB. Commands — Python `python3 <f>`, Julia `julia <f>`, C++ `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <f> && ./a.out`, OCaml `ocaml <f>`, Rust `rustc -O -o a.out <f> && ./a.out`, Lean one-off `lake env lean <f>`. No sandboxing (local personal tool).
+**Execution service** (`execution.ts`, single-file): own cwd per session; timeout 30s single-file / 120s CMake·dune·Cargo (SIGTERM + 2s SIGKILL); stdout/stderr truncated to 1 MB. Commands — Python `python3 <f>` (prefers the session `.venv`), Julia `julia --project=. <f>` when a `Project.toml` exists else `julia <f>`, C++ `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <f> && ./a.out`, OCaml `ocaml <f>`, Rust `rustc -O -o a.out <f> && ./a.out`, Lean one-off `lake env lean <f>`. No sandboxing (local personal tool).
 
 ## Client Views
 
@@ -214,7 +233,7 @@ Key in `settings.claude_api_key` (Settings modal), **read server-side only, neve
 
 **Backend:** Express 4, TS 5, better-sqlite3 11+, ws, cors, tsx (dev), `node-pty` (native, rebuilds on install), `multer`, `child_process`.
 
-**External tools (PATH):** `lean`+`lake` (via elan; Lean sessions), `clangd` (C++ LSP), `cmake` (+ `ninja` auto-preferred), `g++` (C++20; single-file + clangd query-driver), `rustc`+`cargo` (Rust sessions; scaffold/build/test/dep-mgmt), `rust-analyzer` (Rust LSP), `cargo-clippy` (optional; Rust lints), `lldb-dap` (optional; Rust debug), `ocaml`+`dune`+`ocamllsp`+`ocamlearlybird` (OCaml), `python3`+`ipykernel`+`uv` (notebooks/bridge + Python envs), `julia` (optional), `git` (Lake/Mathlib).
+**External tools (PATH):** `lean`+`lake` (via elan; Lean sessions), `clangd` (C++ LSP), `cmake` (+ `ninja` auto-preferred), `g++` (C++20; single-file + clangd query-driver), `rustc`+`cargo` (Rust sessions; scaffold/build/test/dep-mgmt), `rust-analyzer` (Rust LSP), `cargo-clippy` (optional; Rust lints), `lldb-dap` (optional; Rust debug), `ocaml`+`dune`+`ocamllsp`+`ocamlearlybird` (OCaml), `python3`+`ipykernel`+`uv` (notebooks/bridge + Python envs), `julia` (Julia sessions; scaffold/run/Pkg/precompile/test; `LanguageServer.jl` auto-installed into a shared env on first LSP use), `git` (Lake/Mathlib).
 
 ## How-Tos
 

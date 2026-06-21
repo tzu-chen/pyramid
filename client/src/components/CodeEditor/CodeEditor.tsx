@@ -233,6 +233,113 @@ function ocamlLanguage(): LanguageSupport {
   return new LanguageSupport(ocamlStreamLanguage);
 }
 
+// --- Julia Syntax Highlighting ---
+
+const juliaKeywords = new Set([
+  'abstract', 'baremodule', 'begin', 'break', 'catch', 'const', 'continue',
+  'do', 'else', 'elseif', 'end', 'export', 'false', 'finally', 'for',
+  'function', 'global', 'if', 'import', 'in', 'isa', 'let', 'local', 'macro',
+  'module', 'mutable', 'primitive', 'quote', 'return', 'struct', 'true', 'try',
+  'type', 'using', 'where', 'while',
+]);
+
+const juliaBuiltins = new Set([
+  'Int', 'Int8', 'Int16', 'Int32', 'Int64', 'Int128', 'UInt', 'UInt8',
+  'UInt16', 'UInt32', 'UInt64', 'UInt128', 'Float16', 'Float32', 'Float64',
+  'Bool', 'Char', 'String', 'Symbol', 'AbstractString', 'Vector', 'Matrix',
+  'Array', 'Dict', 'Set', 'Tuple', 'NamedTuple', 'Pair', 'Range', 'Nothing',
+  'Missing', 'Any', 'Number', 'Real', 'Integer', 'Signed', 'Unsigned',
+  'AbstractFloat', 'Complex', 'Rational', 'BigInt', 'BigFloat', 'Function',
+  'Type', 'Union', 'DataType', 'Ref', 'Ptr',
+]);
+
+// Julia constants highlighted as atoms/values rather than keywords.
+const juliaAtoms = new Set(['nothing', 'missing', 'Inf', 'NaN', 'pi', 'ℯ', 'im']);
+
+interface JuliaState {
+  // #= ... =# block comments nest in Julia.
+  inBlockComment: number;
+  // 0 = not in string, 1 = "...", 3 = """..."""
+  stringQuote: 0 | 1 | 3;
+}
+
+const juliaStreamDef = {
+  startState(): JuliaState {
+    return { inBlockComment: 0, stringQuote: 0 };
+  },
+  token(stream: StringStream, state: JuliaState): string | null {
+    // Nestable block comment: #= ... =#
+    if (state.inBlockComment > 0) {
+      if (stream.match('#=')) { state.inBlockComment++; return 'comment'; }
+      if (stream.match('=#')) { state.inBlockComment--; return 'comment'; }
+      stream.next();
+      return 'comment';
+    }
+
+    // Inside a string (single- or triple-quoted)
+    if (state.stringQuote > 0) {
+      if (state.stringQuote === 3) {
+        if (stream.match('"""')) { state.stringQuote = 0; return 'string'; }
+      } else if (stream.match('"')) {
+        state.stringQuote = 0;
+        return 'string';
+      }
+      if (stream.match(/^\\./)) return 'string'; // escape
+      if (stream.match(/^[^"\\]+/)) return 'string';
+      stream.next();
+      return 'string';
+    }
+
+    if (stream.eatSpace()) return null;
+
+    // Line comment
+    if (stream.match('#=')) { state.inBlockComment = 1; return 'comment'; }
+    if (stream.match('#')) { stream.skipToEnd(); return 'comment'; }
+
+    // Strings: triple-quoted first, then plain. Also string-macro prefixes
+    // like r"..." / b"..." just fall through to the normal string handling.
+    if (stream.match('"""')) { state.stringQuote = 3; return 'string'; }
+    if (stream.match('"')) { state.stringQuote = 1; return 'string'; }
+
+    // Char literal: 'x' or '\n' or 'ሴ'
+    if (stream.match(/^'(?:\\(?:[\\'"ntrb0aefv]|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,6}|U[0-9a-fA-F]{1,8})|[^\\'])'/)) return 'string';
+
+    // Macro invocation: @name / @. etc.
+    if (stream.match(/^@[\p{L}_][\p{L}\p{N}_!]*/u) || stream.match(/^@\./)) return 'meta';
+
+    // Numbers (hex/oct/bin, then decimal/float incl. Float32 `f0` exponent)
+    if (stream.match(/^0[xX][0-9a-fA-F_]+/)) return 'number';
+    if (stream.match(/^0[oO][0-7_]+/)) return 'number';
+    if (stream.match(/^0[bB][01_]+/)) return 'number';
+    if (stream.match(/^[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eEf][+-]?[0-9_]+)?/)) return 'number';
+    if (stream.match(/^\.[0-9][0-9_]*(?:[eEf][+-]?[0-9_]+)?/)) return 'number';
+
+    // Operators (multi-char first). Includes Julia-isms like ::, ->, <:, .+, |>
+    if (stream.match(/^(?:\.\.\.|->|<:|>:|::|\|>|<<|>>|\.[+\-*/^%]|&&|\|\||==|!=|<=|>=|\.\.|\+=|-=|\*=|\/=)/)) return 'operator';
+    if (stream.match(/^[+\-*/%=<>!&|^~?:\\]/)) return 'operator';
+
+    // Identifiers and keywords (Unicode-aware — Julia uses α, ∑, etc.)
+    if (stream.match(/^[\p{L}_][\p{L}\p{N}_!]*/u)) {
+      const word = stream.current();
+      if (juliaKeywords.has(word)) return 'keyword';
+      if (juliaAtoms.has(word)) return 'meta';
+      if (juliaBuiltins.has(word)) return 'typeName';
+      // Capitalised → type / constructor by convention
+      if (/^[A-Z]/.test(word)) return 'typeName';
+      return 'variableName';
+    }
+
+    stream.next();
+    return null;
+  },
+};
+
+const juliaStreamLanguage = StreamLanguage.define(juliaStreamDef);
+
+function juliaLanguage(): LanguageSupport {
+  return new LanguageSupport(juliaStreamLanguage);
+}
+
 // --- Unicode Input Extension ---
 
 function unicodeInputExtension(): Extension {
@@ -590,7 +697,7 @@ function getLanguageExtension(language: string): Extension {
     case 'python': return pythonWithCompletion();
     case 'cpp': return cpp();
     case 'rust': return rust();
-    case 'julia': return pythonWithCompletion(); // Close enough syntax for basic highlighting
+    case 'julia': return juliaLanguage();
     case 'ocaml': return ocamlLanguage();
     case 'lean': return leanLanguage();
     default: return pythonWithCompletion();
@@ -708,7 +815,9 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       }),
     ];
 
-    if (language === 'lean') {
+    if (language === 'lean' || language === 'julia') {
+      // Julia's REPL uses the same \name LaTeX abbreviations (\alpha→α) as Lean,
+      // so the shared UNICODE_MAP + input extension applies directly.
       extensions.push(unicodeInputExtension());
     }
 
@@ -749,6 +858,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       const langData = language === 'cpp' ? cppLanguage.data
         : language === 'rust' ? rustLanguage.data
         : language === 'ocaml' ? ocamlStreamLanguage.data
+        : language === 'julia' ? juliaStreamLanguage.data
         : pythonLanguage.data;
       extensions.push(langData.of({ autocomplete: externalSource }));
     }

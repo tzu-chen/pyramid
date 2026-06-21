@@ -7,6 +7,7 @@ import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { useCppLsp, type CppDocumentSymbol } from '../../hooks/useCppLsp';
 import { useOcamlLsp, type OcamlDocumentSymbol } from '../../hooks/useOcamlLsp';
 import { useRustLsp, type RustDocumentSymbol } from '../../hooks/useRustLsp';
+import { useJuliaLsp, type JuliaDocumentSymbol } from '../../hooks/useJuliaLsp';
 import { useDapSession, type DapStackFrame } from '../../hooks/useDapSession';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
@@ -60,6 +61,8 @@ import {
   type CargoProfile,
 } from '../../services/cargoBuildService';
 import { cargoEnvService } from '../../services/cargoEnvService';
+import { juliaBuildService } from '../../services/juliaBuildService';
+import { juliaEnvService } from '../../services/juliaEnvService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
@@ -90,6 +93,9 @@ const OCAML_SOURCE_EXTS = new Set(['ml', 'mli']);
 
 // Files rust-analyzer should syntax-check. Cargo.toml, *.md, etc. are not opened.
 const RUST_SOURCE_EXTS = new Set(['rs']);
+
+// Files LanguageServer.jl should syntax-check. Project.toml, *.md, etc. are not.
+const JULIA_SOURCE_EXTS = new Set(['jl']);
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -204,6 +210,11 @@ function SessionPage() {
   const rustLsp = useRustLsp(id, isFreeformRust && !suspended, rustProjectPath, clippyOnSave);
   useEffect(() => { localStorage.setItem(CARGO_CLIPPY_KEY, clippyOnSave ? '1' : '0'); }, [clippyOnSave]);
 
+  // Julia LSP hook (LanguageServer.jl) — only enabled for freeform Julia sessions
+  const isFreeformJulia = isFreeform && session?.language === 'julia';
+  const juliaProjectPath = isFreeformJulia ? (session?.absolute_working_dir ?? null) : null;
+  const juliaLsp = useJuliaLsp(id, isFreeformJulia && !suspended, juliaProjectPath);
+
   // CMake-specific state (only relevant for freeform C++ sessions whose dir
   // contains a CMakeLists.txt — populated lazily after session load).
   const [isCmakeProject, setIsCmakeProject] = useState(false);
@@ -251,6 +262,14 @@ function SessionPage() {
   const [cargoBuildError, setCargoBuildError] = useState<string | null>(null);
   const [cargoHistoryRefresh, setCargoHistoryRefresh] = useState(0);
 
+  // Julia build pipeline state (precompile / test). No flavors or artifacts.
+  const [isJuliaProj, setIsJuliaProj] = useState(false);
+  const [juliaBuilding, setJuliaBuilding] = useState(false);
+  const [juliaTesting, setJuliaTesting] = useState(false);
+  const [juliaLastBuild, setJuliaLastBuild] = useState<BuildResponse | null>(null);
+  const [juliaBuildError, setJuliaBuildError] = useState<string | null>(null);
+  const [juliaHistoryRefresh, setJuliaHistoryRefresh] = useState(0);
+
   // Debugger state. Only meaningful when isFreeformOcaml && isDuneProject.
   // Breakpoints are session-scoped, in-memory (file path → 1-indexed lines).
   const [breakpoints, setBreakpoints] = useState<Map<string, number[]>>(new Map());
@@ -281,6 +300,9 @@ function SessionPage() {
   // Rust outline symbols (same shape).
   const [rustSymbols, setRustSymbols] = useState<RustDocumentSymbol[]>([]);
   const [rustSymbolsLoading, setRustSymbolsLoading] = useState(false);
+  // Julia outline symbols (same shape).
+  const [juliaSymbols, setJuliaSymbols] = useState<JuliaDocumentSymbol[]>([]);
+  const [juliaSymbolsLoading, setJuliaSymbolsLoading] = useState(false);
   const debouncedFileContent = useDebounce(fileContent, 800);
 
   const debouncedNotes = useDebounce(notes, 1500);
@@ -424,7 +446,7 @@ function SessionPage() {
     lspOpenedFileRef.current = null;
     fileUriRef.current = null;
     setEditorCursorLine(null);
-  }, [activeFileId, lsp.initialized, cppLsp.initialized, ocamlLsp.initialized, rustLsp.initialized]);
+  }, [activeFileId, lsp.initialized, cppLsp.initialized, ocamlLsp.initialized, rustLsp.initialized, juliaLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
   useEffect(() => {
@@ -567,6 +589,47 @@ function SessionPage() {
     return () => { cancelled = true; };
   }, [isFreeformRust, rustLsp, activeFileId, debouncedFileContent]);
 
+  // Julia didOpen flow — only *.jl files go to LanguageServer.jl.
+  useEffect(() => {
+    if (!isFreeformJulia || !juliaLsp.initialized || !session?.files || !activeFileId) return;
+    const file = session.files.find(f => f.id === activeFileId);
+    if (!file) return;
+    const ext = file.filename.split('.').pop()?.toLowerCase() ?? '';
+    if (!JULIA_SOURCE_EXTS.has(ext)) {
+      fileUriRef.current = null;
+      lspOpenedFileRef.current = null;
+      return;
+    }
+    const uri = getFileUri(file.filename);
+    fileUriRef.current = uri;
+    if (lspOpenedFileRef.current !== uri) {
+      juliaLsp.sendDidOpen(uri, fileContent);
+      lspOpenedFileRef.current = uri;
+    }
+  }, [isFreeformJulia, juliaLsp.initialized, fileContent, activeFileId, session?.files, getFileUri, juliaLsp.sendDidOpen]);
+
+  // Julia outline: same pattern as C++/OCaml/Rust.
+  useEffect(() => {
+    if (!isFreeformJulia || !juliaLsp.initialized || !fileUriRef.current) {
+      setJuliaSymbols([]);
+      return;
+    }
+    let cancelled = false;
+    setJuliaSymbolsLoading(true);
+    juliaLsp
+      .requestDocumentSymbols(fileUriRef.current)
+      .then((syms) => {
+        if (!cancelled) setJuliaSymbols(syms);
+      })
+      .catch(() => {
+        if (!cancelled) setJuliaSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled) setJuliaSymbolsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isFreeformJulia, juliaLsp, activeFileId, debouncedFileContent]);
+
   // Auto-save notes
   useEffect(() => {
     if (id && debouncedNotes !== prevNotesRef.current && notesEditing) {
@@ -611,6 +674,8 @@ function SessionPage() {
   ocamlLspRef.current = ocamlLsp;
   const rustLspRef = useRef(rustLsp);
   rustLspRef.current = rustLsp;
+  const juliaLspRef = useRef(juliaLsp);
+  juliaLspRef.current = juliaLsp;
 
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
@@ -626,9 +691,11 @@ function SessionPage() {
         ocamlLspRef.current.sendDidChange(fileUriRef.current, content);
       } else if (isFreeformRust && fileUriRef.current) {
         rustLspRef.current.sendDidChange(fileUriRef.current, content);
+      } else if (isFreeformJulia && fileUriRef.current) {
+        juliaLspRef.current.sendDidChange(fileUriRef.current, content);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust, isFreeformJulia]);
 
   const handleCursorChange = useCallback((position: { line: number; character: number }) => {
     if (isLean && fileUriRef.current) {
@@ -870,6 +937,50 @@ function SessionPage() {
       setCargoTesting(false);
     }
   }, [id, cargoTesting, cargoProfileId, activeFileId]);
+
+  // ─── Julia build pipeline (precompile / test) ─────────────────────────────
+
+  useEffect(() => {
+    if (!id || !isFreeformJulia) {
+      setIsJuliaProj(false);
+      return;
+    }
+    juliaBuildService.status(id)
+      .then((s) => setIsJuliaProj(s.is_julia_project))
+      .catch(() => setIsJuliaProj(false));
+  }, [id, isFreeformJulia, session?.files]);
+
+  const handleJuliaBuild = useCallback(async () => {
+    if (!id || juliaBuilding) return;
+    setJuliaBuilding(true);
+    setJuliaBuildError(null);
+    setActiveTab('build');
+    try {
+      const resp = await juliaBuildService.build(id, 'precompile');
+      setJuliaLastBuild(resp);
+      setJuliaHistoryRefresh(n => n + 1);
+    } catch (err) {
+      setJuliaBuildError((err as Error).message);
+    } finally {
+      setJuliaBuilding(false);
+    }
+  }, [id, juliaBuilding]);
+
+  const handleJuliaTest = useCallback(async () => {
+    if (!id || juliaTesting) return;
+    setJuliaTesting(true);
+    setJuliaBuildError(null);
+    setActiveTab('build');
+    try {
+      const resp = await juliaBuildService.build(id, 'test');
+      setJuliaLastBuild(resp);
+      setJuliaHistoryRefresh(n => n + 1);
+    } catch (err) {
+      setJuliaBuildError((err as Error).message);
+    } finally {
+      setJuliaTesting(false);
+    }
+  }, [id, juliaTesting]);
 
   // ─── Debugger (earlybird / lldb DAP) ──────────────────────────────────────
 
@@ -1195,9 +1306,11 @@ function SessionPage() {
         ocamlLspRef.current.sendDidChange(fileUriRef.current, code);
       } else if (isFreeformRust && fileUriRef.current) {
         rustLspRef.current.sendDidChange(fileUriRef.current, code);
+      } else if (isFreeformJulia && fileUriRef.current) {
+        juliaLspRef.current.sendDidChange(fileUriRef.current, code);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust, isNotebook]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust, isFreeformJulia, isNotebook]);
 
   const updateLinks = async (newLinks: SessionLink[]) => {
     if (!id || !session) return;
@@ -1399,6 +1512,42 @@ function SessionPage() {
     return await rustLspRef.current.requestHover(fileUriRef.current, line, character);
   }, [isFreeformRust]);
 
+  // Julia LSP: completion + hover sources for the editor
+  const juliaExternalCompletion = useCallback(async (code: string, cursorPos: number) => {
+    if (!isFreeformJulia || !fileUriRef.current) return null;
+    let line = 0;
+    let lineStart = 0;
+    for (let i = 0; i < cursorPos; i++) {
+      if (code.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+    }
+    const character = cursorPos - lineStart;
+    const items = await juliaLspRef.current.requestCompletion(fileUriRef.current, line, character);
+    if (!items || items.length === 0) return null;
+    // Replacement range: Julia identifiers are letters/digits/underscore and may
+    // end with '!' (push!). Unicode identifiers are left to explicit invocation.
+    let from = cursorPos;
+    while (from > 0) {
+      const c = code.charCodeAt(from - 1);
+      const isWord = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 33;
+      if (!isWord) break;
+      from--;
+    }
+    return {
+      from,
+      to: cursorPos,
+      matches: items.slice(0, 100).map((it) => ({
+        label: it.insertText || it.label,
+        type: 'variable',
+        detail: it.detail,
+      })),
+    };
+  }, [isFreeformJulia]);
+
+  const juliaExternalHover = useCallback(async (line: number, character: number) => {
+    if (!isFreeformJulia || !fileUriRef.current) return null;
+    return await juliaLspRef.current.requestHover(fileUriRef.current, line, character);
+  }, [isFreeformJulia]);
+
   if (loading) return <div className={styles.loading}>Loading...</div>;
   if (error) return <div className={styles.error}>Error: {error}</div>;
   if (!session) return <div className={styles.error}>Session not found</div>;
@@ -1417,6 +1566,8 @@ function SessionPage() {
   const activeFileIsOcaml = isFreeformOcaml && OCAML_SOURCE_EXTS.has(activeFileExt);
   // Same gating for rust-analyzer + *.rs.
   const activeFileIsRust = isFreeformRust && RUST_SOURCE_EXTS.has(activeFileExt);
+  // Same gating for LanguageServer.jl + *.jl.
+  const activeFileIsJulia = isFreeformJulia && JULIA_SOURCE_EXTS.has(activeFileExt);
 
   // Lake status badge variant
   const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
@@ -1626,10 +1777,30 @@ function SessionPage() {
                   </button>
                 </>
               )}
+              {isJuliaProj && (
+                <>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleJuliaBuild}
+                    disabled={juliaBuilding}
+                    title="Pkg.precompile() — precompile the session environment"
+                  >
+                    {juliaBuilding ? 'Precompiling...' : 'Precompile'}
+                  </button>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleJuliaTest}
+                    disabled={juliaTesting}
+                    title="Run test/runtests.jl (or Pkg.test())"
+                  >
+                    {juliaTesting ? 'Testing...' : 'Test'}
+                  </button>
+                </>
+              )}
               <button className={styles.runButton} onClick={handleExecute} disabled={executing} title="Run (Ctrl+Enter)">
                 {executing ? ((isCmakeProject || isDuneProject || isCargoProject) ? 'Building/Running...' : 'Running...') : 'Run'}
               </button>
-              {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
+              {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success) || (juliaLastBuild && !juliaLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
                 <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
               )}
             </>
@@ -1765,23 +1936,26 @@ function SessionPage() {
                       value={fileContent}
                       language={session.language}
                       onChange={handleSaveFile}
-                      onCursorChange={activeFileIsCpp || activeFileIsOcaml || activeFileIsRust ? handleCursorChange : undefined}
+                      onCursorChange={activeFileIsCpp || activeFileIsOcaml || activeFileIsRust || activeFileIsJulia ? handleCursorChange : undefined}
                       diagnostics={
                         activeFileIsCpp ? cppLsp.diagnostics
                         : activeFileIsOcaml ? ocamlLsp.diagnostics
                         : activeFileIsRust ? rustLsp.diagnostics
+                        : activeFileIsJulia ? juliaLsp.diagnostics
                         : undefined
                       }
                       externalCompletion={
                         activeFileIsCpp ? cppExternalCompletion
                         : activeFileIsOcaml ? ocamlExternalCompletion
                         : activeFileIsRust ? rustExternalCompletion
+                        : activeFileIsJulia ? juliaExternalCompletion
                         : undefined
                       }
                       externalHover={
                         activeFileIsCpp ? cppExternalHover
                         : activeFileIsOcaml ? ocamlExternalHover
                         : activeFileIsRust ? rustExternalHover
+                        : activeFileIsJulia ? juliaExternalHover
                         : undefined
                       }
                       fontSize={fontSize}
@@ -1879,13 +2053,13 @@ function SessionPage() {
                     Output
                   </button>
                 )}
-                {(isCmakeProject || isDuneProject || isCargoProject) && (
+                {(isCmakeProject || isDuneProject || isCargoProject || isJuliaProj) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'build' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('build')}
                   >
                     Build
-                    {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success)) && (
+                    {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success) || (juliaLastBuild && !juliaLastBuild.success)) && (
                       <span className={styles.tabBadge}>!</span>
                     )}
                   </button>
@@ -1898,7 +2072,7 @@ function SessionPage() {
                     Artifacts
                   </button>
                 )}
-                {(isFreeformCpp || isFreeformOcaml || isFreeformRust) && (
+                {(isFreeformCpp || isFreeformOcaml || isFreeformRust || isFreeformJulia) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'outline' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('outline')}
@@ -1931,7 +2105,7 @@ function SessionPage() {
                     Variables
                   </button>
                 )}
-                {(hasVenv || isFreeformRust) && (
+                {(hasVenv || isFreeformRust || isFreeformJulia) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'packages' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('packages')}
@@ -2188,6 +2362,16 @@ function SessionPage() {
               />
             )}
 
+            {/* Julia: Outline (LanguageServer.jl documentSymbol) */}
+            {activeTab === 'outline' && isFreeformJulia && (
+              <OutlinePanel
+                symbols={juliaSymbols}
+                loading={juliaSymbolsLoading}
+                initialized={juliaLsp.initialized}
+                onSelect={handleOutlineSelect}
+              />
+            )}
+
             {/* Notebook: Variable Inspector */}
             {isNotebook && (
               <div style={{ display: activeTab === 'variables' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
@@ -2271,6 +2455,23 @@ function SessionPage() {
                   refreshKey={cargoHistoryRefresh}
                   fetchHistory={cargoBuildService.history}
                   emptyPlaceholder="Click Build to run cargo build for the active profile, or Clippy for lints."
+                  onDiagnosticClick={handleDiagnosticClick}
+                />
+              </div>
+            )}
+
+            {/* Julia: precompile / test build results */}
+            {activeTab === 'build' && isJuliaProj && (
+              <div className={styles.buildTabPane}>
+                {juliaBuildError && (
+                  <div className={styles.buildError}>{juliaBuildError}</div>
+                )}
+                <BuildPanel
+                  sessionId={id!}
+                  latest={juliaLastBuild}
+                  refreshKey={juliaHistoryRefresh}
+                  fetchHistory={juliaBuildService.history}
+                  emptyPlaceholder="Click Precompile to precompile the environment, or Test to run test/runtests.jl."
                   onDiagnosticClick={handleDiagnosticClick}
                 />
               </div>
@@ -2372,6 +2573,19 @@ function SessionPage() {
                 lockLabel="Cargo.lock"
                 toolLabel="cargo"
                 addPlaceholder="crate (e.g. serde@1.0)"
+              />
+            )}
+
+            {/* Packages: Pkg dependency management (julia) */}
+            {activeTab === 'packages' && isFreeformJulia && (
+              <PackagesPanel
+                sessionId={id!}
+                refreshKey={juliaHistoryRefresh}
+                service={juliaEnvService}
+                lockLabel="Manifest.toml"
+                toolLabel="Pkg"
+                addPlaceholder="package (e.g. DataFrames)"
+                allowDev={false}
               />
             )}
 

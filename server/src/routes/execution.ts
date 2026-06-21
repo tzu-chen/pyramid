@@ -69,6 +69,12 @@ import {
   type CargoProfile,
 } from '../services/cargo-build.js';
 import { listRustDebugTargets } from '../services/rust-dap.js';
+import {
+  isJuliaProject,
+  runJuliaBuild,
+  type JuliaBuildMode,
+  type JuliaBuildResult,
+} from '../services/julia-build.js';
 
 const router = Router();
 
@@ -1274,6 +1280,104 @@ router.post('/:id/cargo/clean', (req: Request, res: Response) => {
     }
     const removed = cargoCleanFlavor(dir, flavor);
     res.json({ removed, scope: cargoFlavorDirName(flavor) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ─── Julia build pipeline (precompile / test) ───────────────────────────────
+// Same builds/build_diagnostics tables; flavor column holds 'precompile' / 'test'.
+// Sessions are typed by language so the flavor namespaces don't collide.
+function persistJuliaBuild(
+  sessionId: string,
+  flavor: JuliaBuildMode,
+  result: JuliaBuildResult,
+): string {
+  const buildId = uuidv4();
+  const now = getCstTimestamp();
+  const insertBuild = db.prepare(`
+    INSERT INTO builds (id, session_id, flavor, success, duration_ms, diagnostic_count, log, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertDiag = db.prepare(`
+    INSERT INTO build_diagnostics (id, build_id, file, line, col, severity, message)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const tx = db.transaction(() => {
+    insertBuild.run(buildId, sessionId, flavor, result.success ? 1 : 0, result.durationMs, result.diagnostics.length, result.log, now);
+    for (const d of result.diagnostics) {
+      insertDiag.run(uuidv4(), buildId, d.file, d.line, d.column, d.severity, d.message);
+    }
+  });
+  tx();
+  return buildId;
+}
+
+function loadJuliaSessionDir(req: Request, res: Response): string | null {
+  const session = db.prepare('SELECT working_dir, language FROM sessions WHERE id = ?').get(req.params.id) as { working_dir: string; language: string } | undefined;
+  if (!session) { res.status(404).json({ error: 'Session not found' }); return null; }
+  if (session.language !== 'julia') { res.status(400).json({ error: 'Session is not a Julia session' }); return null; }
+  return sessionAbsDir(session.working_dir);
+}
+
+// GET /api/sessions/:id/julia/status
+router.get('/:id/julia/status', (req: Request, res: Response) => {
+  try {
+    const dir = loadJuliaSessionDir(req, res);
+    if (!dir) return;
+    res.json({ is_julia_project: isJuliaProject(dir), project_path: dir });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/julia/build  { mode: 'precompile' | 'test' }
+router.post('/:id/julia/build', async (req: Request, res: Response) => {
+  try {
+    const dir = loadJuliaSessionDir(req, res);
+    if (!dir) return;
+    if (!isJuliaProject(dir)) {
+      res.status(400).json({ error: 'No Project.toml in session root' });
+      return;
+    }
+    const mode: JuliaBuildMode = req.body?.mode === 'test' ? 'test' : 'precompile';
+    const result = await runJuliaBuild(dir, mode);
+    const buildId = persistJuliaBuild(req.params.id as string, mode, result);
+    res.json({
+      build_id: buildId,
+      flavor: mode,
+      success: result.success,
+      duration_ms: result.durationMs,
+      diagnostics: result.diagnostics,
+      log: result.log,
+      binary_paths: result.binaryPaths,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/julia/builds
+router.get('/:id/julia/builds', (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const builds = db.prepare(`
+      SELECT id, session_id, flavor, success, duration_ms, diagnostic_count, created_at
+      FROM builds WHERE session_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(req.params.id, limit);
+    res.json(builds);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/julia/builds/:buildId
+router.get('/:id/julia/builds/:buildId', (req: Request, res: Response) => {
+  try {
+    const build = db.prepare('SELECT * FROM builds WHERE id = ? AND session_id = ?').get(req.params.buildId, req.params.id);
+    if (!build) { res.status(404).json({ error: 'Build not found' }); return; }
+    const diagnostics = db.prepare('SELECT file, line, col AS column, severity, message FROM build_diagnostics WHERE build_id = ?').all(req.params.buildId);
+    res.json({ ...build, diagnostics });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

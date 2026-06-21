@@ -17,6 +17,7 @@ import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
 import pythonEnvRouter from './routes/python-env.js';
 import cargoEnvRouter from './routes/cargo-env.js';
+import juliaEnvRouter from './routes/julia-env.js';
 import godboltRouter from './routes/godbolt.js';
 import backendsRouter from './routes/backends.js';
 import { leanLsp } from './services/lean-lsp.js';
@@ -28,6 +29,8 @@ import { ocamlDap } from './services/ocaml-dap.js';
 import { rustLsp } from './services/rust-lsp.js';
 import { rustProject } from './services/rust-project.js';
 import { rustDap } from './services/rust-dap.js';
+import { juliaLsp } from './services/julia-lsp.js';
+import { juliaProject } from './services/julia-project.js';
 import { notebookKernel } from './services/notebook-kernel.js';
 import { pythonEnv } from './services/python-env.js';
 import { terminal } from './services/terminal.js';
@@ -51,6 +54,7 @@ app.use('/api/scribe', scribeProxyRouter);
 app.use('/api/notebooks', notebooksRouter);
 app.use('/api/python-env', pythonEnvRouter);
 app.use('/api/cargo-env', cargoEnvRouter);
+app.use('/api/julia-env', juliaEnvRouter);
 app.use('/api/godbolt', godboltRouter);
 app.use('/api/backends', backendsRouter);
 
@@ -148,6 +152,26 @@ server.on('upgrade', (request, socket, head) => {
     return;
   }
 
+  // Match /ws/julia/:sessionId
+  const juliaMatch = pathname?.match(/^\/ws\/julia\/([a-f0-9-]+)$/);
+  if (juliaMatch) {
+    const sessionId = juliaMatch[1];
+    const session = db.prepare('SELECT session_type, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; working_dir: string } | undefined;
+    if (!session || session.session_type !== 'julia') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = resolveSessionCwd(session.working_dir);
+      // Ensure a Project.toml exists (promotes sessions created before this
+      // feature landed) so LanguageServer.jl has an environment to analyse.
+      juliaProject.ensureJuliaProject(cwd);
+      juliaLsp.handleWebSocket(ws, sessionId, cwd);
+    });
+    return;
+  }
+
   // Match /ws/debug/:sessionId — language-specific DAP (OCaml earlybird / Rust lldb)
   const debugMatch = pathname?.match(/^\/ws\/debug\/([a-f0-9-]+)$/);
   if (debugMatch) {
@@ -213,6 +237,7 @@ function shutdown() {
   ocamlDap.forceStopAll();
   rustLsp.forceStopAll();
   rustDap.forceStopAll();
+  juliaLsp.forceStopAll();
   notebookKernel.forceStopAll();
   terminal.forceStopAll();
   server.close(() => {

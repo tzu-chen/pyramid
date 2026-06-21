@@ -14,6 +14,8 @@ import { ocamlDap } from '../services/ocaml-dap.js';
 import { rustLsp } from '../services/rust-lsp.js';
 import { rustProject } from '../services/rust-project.js';
 import { rustDap } from '../services/rust-dap.js';
+import { juliaProject } from '../services/julia-project.js';
+import { juliaLsp } from '../services/julia-lsp.js';
 import { symlinkPath } from '../services/bc-fixup.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
 import { pythonEnv } from '../services/python-env.js';
@@ -201,6 +203,12 @@ router.post('/', async (req: Request, res: Response) => {
       ocamlProject.ensureDefaults(absWorkingDir);
     }
 
+    // Julia freeform: mark the dir as a Pkg environment (empty Project.toml) so
+    // `julia --project=.` activation and Pkg add/remove work out of the box.
+    if (!isLean && !isNotebook && language === 'julia') {
+      juliaProject.ensureJuliaProject(absWorkingDir);
+    }
+
     // Handle Lean session: scaffold Lake project and insert metadata
     if (isLean) {
       const metaId = uuidv4();
@@ -279,6 +287,13 @@ router.post('/:id/clone', (req: Request, res: Response) => {
         INSERT INTO session_files (id, session_id, filename, file_type, language, is_primary, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(uuidv4(), newId, f.filename, f.file_type, f.language, f.is_primary, now, now);
+    }
+
+    // Julia: the copied Project.toml/Manifest.toml fully describe the env and the
+    // Julia depot is global, so no rebuild is needed — just ensure a manifest
+    // exists for legacy sessions that predate the scaffold.
+    if (src.session_type === 'julia') {
+      juliaProject.ensureJuliaProject(dstAbs);
     }
 
     // Python/notebook: rebuild the venv from the copied uv.lock in the background.
@@ -364,6 +379,7 @@ router.delete('/:id', (req: Request, res: Response) => {
       ocamlDap.stop(req.params.id as string);
       rustLsp.stopLsp(req.params.id as string);
       rustDap.stop(req.params.id as string);
+      juliaLsp.stopLsp(req.params.id as string);
       // Remove the per-session bytecode-debug symlink in /tmp (created by
       // bc-fixup post-build for OCaml debug). Safe to call for non-OCaml
       // sessions — it just no-ops if the symlink isn't present.

@@ -93,6 +93,14 @@ export async function executeFile(
     }
   }
 
+  // Julia: activate the session's Pkg environment when a Project.toml exists, so
+  // added packages are available. Falls back to bare `julia <file>` otherwise
+  // (legacy sessions). Mirrors the Python venv-preference above.
+  if (language === 'julia' && fs.existsSync(path.join(path.resolve(workingDir), 'Project.toml'))) {
+    args = ['--project=.', filename];
+    commandStr = `julia --project=. ${filename}`;
+  }
+
   return new Promise((resolve) => {
     const startTime = Date.now();
     let stdout = '';

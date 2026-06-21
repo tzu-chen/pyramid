@@ -21,9 +21,12 @@ interface PackagesPanelProps {
   // Package manager + labels. Defaults to uv/Python so existing call sites
   // need no change; Rust sessions pass the cargo service.
   service?: PackageService;
-  lockLabel?: string;       // 'uv.lock' | 'Cargo.lock'
-  toolLabel?: string;       // 'uv' | 'cargo'
+  lockLabel?: string;       // 'uv.lock' | 'Cargo.lock' | 'Manifest.toml'
+  toolLabel?: string;       // 'uv' | 'cargo' | 'Pkg'
   addPlaceholder?: string;  // input hint
+  // Whether to show the "dev" dependency toggle. Off for managers without a
+  // first-class main/dev split (Julia Pkg).
+  allowDev?: boolean;
 }
 
 export default function PackagesPanel({
@@ -33,6 +36,7 @@ export default function PackagesPanel({
   lockLabel = 'uv.lock',
   toolLabel = 'uv',
   addPlaceholder = 'package (e.g. numpy>=2.0)',
+  allowDev = true,
 }: PackagesPanelProps) {
   const [pkgs, setPkgs] = useState<PackageList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,10 +104,12 @@ export default function PackagesPanel({
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
         />
-        <label className={styles.devToggle} title="Add as a development dependency">
-          <input type="checkbox" checked={dev} disabled={busy} onChange={e => setDev(e.target.checked)} />
-          dev
-        </label>
+        {allowDev && (
+          <label className={styles.devToggle} title="Add as a development dependency">
+            <input type="checkbox" checked={dev} disabled={busy} onChange={e => setDev(e.target.checked)} />
+            dev
+          </label>
+        )}
         <button className={styles.addButton} disabled={busy || !input.trim()} onClick={handleAdd}>Add</button>
       </div>
 
