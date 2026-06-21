@@ -108,11 +108,21 @@ Bidirectional LSP JSON-RPC relay between the browser and the Lean Language Serve
 GET /api/sessions/:id/files
 ```
 
-**Read file content:**
+**Read file content (text):**
 
 ```
 GET /api/sessions/:id/files/:fileId/content
 ```
+
+Decodes the file as UTF-8 — use for source/text files only.
+
+**Read file raw bytes:**
+
+```
+GET /api/sessions/:id/files/:fileId/raw
+```
+
+Streams the file as-is with a `Content-Type` inferred from its extension. Use this for binary artifacts such as plot images (PNG/PDF/SVG); the `/content` route would corrupt them. Monolith uses this to pull plots into a project.
 
 **Write file content:**
 

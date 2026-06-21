@@ -74,6 +74,37 @@ router.get('/:id/files/:fileId/content', (req: Request, res: Response) => {
   }
 });
 
+// GET /api/sessions/:id/files/:fileId/raw
+// Binary-safe sibling of /content: streams the file with the correct
+// Content-Type (inferred from the extension) instead of decoding as UTF-8.
+// Needed so sibling apps (e.g. Monolith) can pull plot images (PNG/PDF/SVG)
+// without corrupting the bytes.
+router.get('/:id/files/:fileId/raw', (req: Request, res: Response) => {
+  try {
+    const file = db.prepare('SELECT * FROM session_files WHERE id = ? AND session_id = ?').get(req.params.fileId, req.params.id) as Record<string, unknown> | undefined;
+    if (!file) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
+    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id) as Record<string, unknown>;
+    const filePath = path.join(getSessionRoot(session.working_dir as string), file.filename as string);
+
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'File not found on disk' });
+      return;
+    }
+
+    res.sendFile(filePath, (err) => {
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // POST /api/sessions/:id/files
 router.post('/:id/files', (req: Request, res: Response) => {
   try {
