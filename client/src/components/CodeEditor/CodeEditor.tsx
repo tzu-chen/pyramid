@@ -4,6 +4,7 @@ import { EditorState, Extension, Compartment, Prec, StateField, StateEffect } fr
 import { ViewPlugin, ViewUpdate, keymap, hoverTooltip, Tooltip, Decoration, DecorationSet, gutter, GutterMarker } from '@codemirror/view';
 import { python, pythonLanguage, localCompletionSource, globalCompletion } from '@codemirror/lang-python';
 import { cpp, cppLanguage } from '@codemirror/lang-cpp';
+import { rust, rustLanguage } from '@codemirror/lang-rust';
 import { StreamLanguage, LanguageSupport, StringStream } from '@codemirror/language';
 import { linter } from '@codemirror/lint';
 import { indentMore, indentLess } from '@codemirror/commands';
@@ -588,6 +589,7 @@ function getLanguageExtension(language: string): Extension {
   switch (language) {
     case 'python': return pythonWithCompletion();
     case 'cpp': return cpp();
+    case 'rust': return rust();
     case 'julia': return pythonWithCompletion(); // Close enough syntax for basic highlighting
     case 'ocaml': return ocamlLanguage();
     case 'lean': return leanLanguage();
@@ -716,7 +718,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
       extensions.push(makeBreakpointGutter(onBreakpointToggleRef));
     }
 
-    if (language === 'python' || language === 'julia' || language === 'cpp' || language === 'ocaml') {
+    if (language === 'python' || language === 'julia' || language === 'cpp' || language === 'ocaml' || language === 'rust') {
       const externalSource = async (ctx: CompletionContext): Promise<CMCompletionResult | null> => {
         const fn = externalCompletionRef.current;
         if (!fn) return null;
@@ -745,6 +747,7 @@ function CodeEditor({ value, language, onChange, onCursorChange, diagnostics, re
         };
       };
       const langData = language === 'cpp' ? cppLanguage.data
+        : language === 'rust' ? rustLanguage.data
         : language === 'ocaml' ? ocamlStreamLanguage.data
         : pythonLanguage.data;
       extensions.push(langData.of({ autocomplete: externalSource }));

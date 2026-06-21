@@ -445,16 +445,20 @@ export function useDapSession(opts: UseDapOptions) {
         appendOutput('console', `[init] adapter ready, sending launch (stopOnEntry=${stopOnEntry})\n`);
         setState('launching');
         await sendRequest('launch', {
-          name: 'OCaml Debug',
-          type: 'ocaml',
+          name: 'Pyramid Debug',
           request: 'launch',
           program,
+          // `arguments` is earlybird's program-args key; `args` is lldb-dap's.
+          // Sending both keeps one launch shape working across both adapters
+          // (each ignores the key it doesn't recognise).
           arguments: args ?? [],
+          args: args ?? [],
           cwd,
           stopOnEntry,
           // earlybird honors `console: "internalConsole"` and forwards
           // debuggee stdout/stderr as `output` events with categories
-          // 'stdout' / 'stderr' — exactly what the panel renders.
+          // 'stdout' / 'stderr' — exactly what the panel renders. lldb-dap
+          // forwards debuggee output as `output` events by default.
           console: 'internalConsole',
         });
         appendOutput('console', '[launch] accepted, waiting for `initialized` event\n');

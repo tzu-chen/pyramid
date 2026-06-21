@@ -155,8 +155,8 @@ export const cppBuildService = {
   },
 };
 
-// Superset of artifact kinds across all build systems (CMake / dune). The
-// component using this type tolerates unknown values via a default branch in
+// Superset of artifact kinds across all build systems (CMake / dune / cargo).
+// The component using this type tolerates unknown values via a default branch in
 // kindClass; specific servers will only emit a subset.
 export type ArtifactKind =
   | 'dir'
@@ -169,6 +169,8 @@ export type ArtifactKind =
   | 'interface'
   | 'bytecode'
   | 'dune'
+  | 'rmeta'
+  | 'depfile'
   | 'text'
   | 'binary';
 

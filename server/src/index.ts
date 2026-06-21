@@ -16,6 +16,7 @@ import claudeRouter from './routes/claude.js';
 import scribeProxyRouter from './routes/scribe-proxy.js';
 import notebooksRouter from './routes/notebooks.js';
 import pythonEnvRouter from './routes/python-env.js';
+import cargoEnvRouter from './routes/cargo-env.js';
 import godboltRouter from './routes/godbolt.js';
 import backendsRouter from './routes/backends.js';
 import { leanLsp } from './services/lean-lsp.js';
@@ -24,6 +25,9 @@ import { cppProject } from './services/cpp-project.js';
 import { ocamlLsp } from './services/ocaml-lsp.js';
 import { ocamlProject } from './services/ocaml-project.js';
 import { ocamlDap } from './services/ocaml-dap.js';
+import { rustLsp } from './services/rust-lsp.js';
+import { rustProject } from './services/rust-project.js';
+import { rustDap } from './services/rust-dap.js';
 import { notebookKernel } from './services/notebook-kernel.js';
 import { pythonEnv } from './services/python-env.js';
 import { terminal } from './services/terminal.js';
@@ -46,6 +50,7 @@ app.use('/api/sessions', claudeRouter);
 app.use('/api/scribe', scribeProxyRouter);
 app.use('/api/notebooks', notebooksRouter);
 app.use('/api/python-env', pythonEnvRouter);
+app.use('/api/cargo-env', cargoEnvRouter);
 app.use('/api/godbolt', godboltRouter);
 app.use('/api/backends', backendsRouter);
 
@@ -123,19 +128,43 @@ server.on('upgrade', (request, socket, head) => {
     return;
   }
 
-  // Match /ws/debug/:sessionId — OCaml debug (earlybird DAP)
-  const debugMatch = pathname?.match(/^\/ws\/debug\/([a-f0-9-]+)$/);
-  if (debugMatch) {
-    const sessionId = debugMatch[1];
-    const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
-      .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
-    if (!session || session.session_type !== 'ocaml') {
+  // Match /ws/rust/:sessionId
+  const rustMatch = pathname?.match(/^\/ws\/rust\/([a-f0-9-]+)$/);
+  if (rustMatch) {
+    const sessionId = rustMatch[1];
+    const session = db.prepare('SELECT session_type, language, working_dir, title FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; language: string; working_dir: string; title: string } | undefined;
+    if (!session || session.session_type !== 'rust') {
       socket.destroy();
       return;
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
       const cwd = resolveSessionCwd(session.working_dir);
-      ocamlDap.handleWebSocket(ws, sessionId, cwd);
+      // Ensure a Cargo package exists (promotes sessions created before this
+      // feature landed) so rust-analyzer has a manifest to anchor to.
+      rustProject.ensureCargoProject(cwd, session.title);
+      rustLsp.handleWebSocket(ws, sessionId, cwd);
+    });
+    return;
+  }
+
+  // Match /ws/debug/:sessionId — language-specific DAP (OCaml earlybird / Rust lldb)
+  const debugMatch = pathname?.match(/^\/ws\/debug\/([a-f0-9-]+)$/);
+  if (debugMatch) {
+    const sessionId = debugMatch[1];
+    const session = db.prepare('SELECT session_type, language, working_dir FROM sessions WHERE id = ?')
+      .get(sessionId) as { session_type: string; language: string; working_dir: string } | undefined;
+    if (!session || (session.session_type !== 'ocaml' && session.session_type !== 'rust')) {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const cwd = resolveSessionCwd(session.working_dir);
+      if (session.session_type === 'rust') {
+        rustDap.handleWebSocket(ws, sessionId, cwd);
+      } else {
+        ocamlDap.handleWebSocket(ws, sessionId, cwd);
+      }
     });
     return;
   }
@@ -182,6 +211,8 @@ function shutdown() {
   cppLsp.forceStopAll();
   ocamlLsp.forceStopAll();
   ocamlDap.forceStopAll();
+  rustLsp.forceStopAll();
+  rustDap.forceStopAll();
   notebookKernel.forceStopAll();
   terminal.forceStopAll();
   server.close(() => {

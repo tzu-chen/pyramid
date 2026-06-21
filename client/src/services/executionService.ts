@@ -2,6 +2,7 @@ import { api } from './api';
 import { ExecutionRun } from '../types';
 import type { BuildFlavor, ExecuteResult } from './cppBuildService';
 import type { DuneFlavor } from './duneBuildService';
+import type { CargoFlavor } from './cargoBuildService';
 
 export const executionService = {
   /**
@@ -17,7 +18,7 @@ export const executionService = {
       file_id?: string;
       timeout_ms?: number;
       stdin?: string;
-      flavor?: BuildFlavor | DuneFlavor;
+      flavor?: BuildFlavor | DuneFlavor | CargoFlavor;
       target?: string;
       args?: string[];
       reconfigure?: boolean;

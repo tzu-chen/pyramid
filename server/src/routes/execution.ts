@@ -47,6 +47,28 @@ import {
 } from '../services/dune-build.js';
 import { listBytecodeTargets } from '../services/ocaml-dap.js';
 import { rewriteBytecodeFiles } from '../services/bc-fixup.js';
+import {
+  isCargoProject,
+  ensureBuilt as cargoEnsureBuilt,
+  cargoTest,
+  cargoClippy,
+  runBinary as cargoRunBinary,
+  pickBinary as cargoPickBinary,
+  validateFlavor as cargoValidateFlavor,
+  flavorDirName as cargoFlavorDirName,
+  cleanFlavor as cargoCleanFlavor,
+  cleanAll as cargoCleanAll,
+  listCargoTargets,
+  listArtifactTree as cargoListArtifactTree,
+  resolveArtifactPath as cargoResolveArtifactPath,
+  statArtifact as cargoStatArtifact,
+  readArtifactText as cargoReadArtifactText,
+  type CargoFlavor,
+  type CargoBuildResult,
+  type CargoDiagnostic,
+  type CargoProfile,
+} from '../services/cargo-build.js';
+import { listRustDebugTargets } from '../services/rust-dap.js';
 
 const router = Router();
 
@@ -75,6 +97,20 @@ function parseDuneFlavor(input: unknown): DuneFlavor {
   const obj = input as Record<string, unknown>;
   const profile = (obj.profile as DuneProfile) ?? fallback.profile;
   return { profile };
+}
+
+function parseCargoFlavor(input: unknown): CargoFlavor {
+  const fallback: CargoFlavor = { profile: 'dev' };
+  if (!input || typeof input !== 'object') return fallback;
+  const obj = input as Record<string, unknown>;
+  const profile: CargoProfile = obj.profile === 'release' ? 'release' : 'dev';
+  const features = Array.isArray(obj.features) ? (obj.features as string[]) : undefined;
+  return {
+    profile,
+    features,
+    allFeatures: !!obj.allFeatures,
+    noDefaultFeatures: !!obj.noDefaultFeatures,
+  };
 }
 
 function persistBuild(
@@ -148,6 +184,43 @@ function persistDuneBuild(
   return buildId;
 }
 
+// Same builds/build_diagnostics tables; flavor column holds the cargo profile
+// dir name ('debug' / 'release'). Sessions are typed by language so the flavor
+// namespaces don't collide within a session.
+function persistCargoBuild(
+  sessionId: string,
+  flavor: CargoFlavor,
+  result: CargoBuildResult,
+): string {
+  const buildId = uuidv4();
+  const now = getCstTimestamp();
+  const insertBuild = db.prepare(`
+    INSERT INTO builds (id, session_id, flavor, success, duration_ms, diagnostic_count, log, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertDiag = db.prepare(`
+    INSERT INTO build_diagnostics (id, build_id, file, line, col, severity, message)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const tx = db.transaction(() => {
+    insertBuild.run(
+      buildId,
+      sessionId,
+      cargoFlavorDirName(flavor),
+      result.success ? 1 : 0,
+      result.durationMs,
+      result.diagnostics.length,
+      result.log,
+      now,
+    );
+    for (const d of result.diagnostics) {
+      insertDiag.run(uuidv4(), buildId, d.file, d.line, d.column, d.severity, d.message);
+    }
+  });
+  tx();
+  return buildId;
+}
+
 // GET /api/sessions/:id/runs
 router.get('/:id/runs', (req: Request, res: Response) => {
   try {
@@ -201,10 +274,12 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
     }
     const isCpp = language === 'cpp';
     const isOcaml = language === 'ocaml';
+    const isRust = language === 'rust';
     const useCmake = isCpp && isCmakeProject(absWorkingDir);
     const useDune = isOcaml && isDuneProject(absWorkingDir);
+    const useCargo = isRust && isCargoProject(absWorkingDir);
 
-    const defaultTimeout = (useCmake || useDune) ? 120000 : 30000;
+    const defaultTimeout = (useCmake || useDune || useCargo) ? 120000 : 30000;
     const timeout = timeout_ms || defaultTimeout;
 
     if (useCmake) {
@@ -384,6 +459,93 @@ router.post('/:id/execute', async (req: Request, res: Response) => {
         kind: 'ran',
         build_id: buildId,
         flavor: duneFlavorDirName(flavor),
+        success: true,
+        diagnostics: build.diagnostics,
+        build_log: build.log,
+        build_duration_ms: build.durationMs,
+        binary_path: binary,
+        run: persistedRun,
+      });
+      return;
+    }
+
+    if (useCargo) {
+      const flavor = parseCargoFlavor(flavorIn);
+      const v = cargoValidateFlavor(flavor);
+      if (!v.valid) {
+        res.status(400).json({ error: v.error });
+        return;
+      }
+
+      // Need a file_id for the execution_runs row (NOT NULL).
+      const runFile = file ?? (db.prepare('SELECT * FROM session_files WHERE session_id = ? AND is_primary = 1').get(req.params.id) as Record<string, unknown> | undefined);
+      if (!runFile) {
+        res.status(400).json({ error: 'Session has no files; create one before running' });
+        return;
+      }
+
+      const build = await cargoEnsureBuilt(absWorkingDir, flavor, { ...flavor, target });
+      const buildId = persistCargoBuild(req.params.id as string, flavor, build);
+
+      if (!build.success) {
+        res.json({
+          kind: 'build_failed',
+          build_id: buildId,
+          flavor: cargoFlavorDirName(flavor),
+          success: false,
+          diagnostics: build.diagnostics,
+          log: build.log,
+          duration_ms: build.durationMs,
+        });
+        return;
+      }
+
+      const binary = cargoPickBinary(build.binaryPaths, target);
+      if (!binary) {
+        res.json({
+          kind: 'no_binary',
+          build_id: buildId,
+          flavor: cargoFlavorDirName(flavor),
+          success: false,
+          diagnostics: build.diagnostics,
+          log: build.log + '\n[run] no executable produced — add a src/main.rs or a [[bin]] target',
+          duration_ms: build.durationMs,
+        });
+        return;
+      }
+
+      const run = await cargoRunBinary(binary, absWorkingDir, {
+        args: Array.isArray(args) ? args : undefined,
+        stdin,
+        timeoutMs: timeout,
+      });
+
+      const runId = uuidv4();
+      const now = getCstTimestamp();
+      db.prepare(`
+        INSERT INTO execution_runs (id, session_id, file_id, command, exit_code, stdout, stderr, duration_ms, created_at, build_id, binary_path, flavor, peak_rss_bytes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        runId,
+        req.params.id,
+        runFile.id as string,
+        run.command,
+        run.exitCode,
+        run.stdout,
+        run.stderr,
+        run.durationMs,
+        now,
+        buildId,
+        binary,
+        cargoFlavorDirName(flavor),
+        run.peakRssBytes,
+      );
+
+      const persistedRun = db.prepare('SELECT * FROM execution_runs WHERE id = ?').get(runId);
+      res.json({
+        kind: 'ran',
+        build_id: buildId,
+        flavor: cargoFlavorDirName(flavor),
         success: true,
         diagnostics: build.diagnostics,
         build_log: build.log,
@@ -822,12 +984,25 @@ router.get('/:id/dune/artifacts/download', (req: Request, res: Response) => {
 
 // GET /api/sessions/:id/debug/binaries?profile=dev
 //
-// List bytecode targets available for debugging. Empty list means the user
-// hasn't built any (modes byte) executables — the client surfaces that.
+// List targets available for debugging — language-specific: OCaml returns
+// bytecode (.bc) targets, Rust returns the native bins under target/debug.
+// Empty list means the user hasn't built a debuggable artifact yet.
 router.get('/:id/debug/binaries', (req: Request, res: Response) => {
   try {
-    const dir = loadDuneSessionDir(req, res);
-    if (!dir) return;
+    const session = db.prepare('SELECT working_dir, language FROM sessions WHERE id = ?').get(req.params.id) as { working_dir: string; language: string } | undefined;
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    if (session.language !== 'ocaml' && session.language !== 'rust') {
+      res.status(400).json({ error: 'Session does not support debugging' });
+      return;
+    }
+    const dir = sessionAbsDir(session.working_dir);
+    if (session.language === 'rust') {
+      res.json({ profile: 'debug', binaries: listRustDebugTargets(dir) });
+      return;
+    }
     const profile = String(req.query.profile ?? 'dev');
     if (profile !== 'dev' && profile !== 'release') {
       res.status(400).json({ error: `Invalid dune profile: ${profile}` });
@@ -859,6 +1034,246 @@ router.post('/:id/dune/clean', (req: Request, res: Response) => {
     }
     const removed = duneCleanFlavor(dir, flavor);
     res.json({ removed, scope: duneFlavorDirName(flavor) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ----- Cargo-specific endpoints (Rust) -----
+
+function loadCargoSessionDir(req: Request, res: Response): string | null {
+  const session = db.prepare('SELECT working_dir, language FROM sessions WHERE id = ?').get(req.params.id) as { working_dir: string; language: string } | undefined;
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return null;
+  }
+  if (session.language !== 'rust') {
+    res.status(400).json({ error: 'Session is not a Rust session' });
+    return null;
+  }
+  return sessionAbsDir(session.working_dir);
+}
+
+// GET /api/sessions/:id/cargo/status
+router.get('/:id/cargo/status', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    res.json({ is_cargo_project: isCargoProject(dir), project_path: dir });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/cargo/build
+router.post('/:id/cargo/build', async (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    if (!isCargoProject(dir)) {
+      res.status(400).json({ error: 'No Cargo.toml in session root' });
+      return;
+    }
+    const flavor = parseCargoFlavor(req.body?.flavor);
+    const v = cargoValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const result = await cargoEnsureBuilt(dir, flavor, { ...flavor, target: req.body?.target, jobs: req.body?.jobs });
+    const buildId = persistCargoBuild(req.params.id as string, flavor, result);
+    res.json({
+      build_id: buildId,
+      flavor: cargoFlavorDirName(flavor),
+      success: result.success,
+      duration_ms: result.durationMs,
+      diagnostics: result.diagnostics,
+      log: result.log,
+      binary_paths: result.binaryPaths,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/cargo/clippy
+router.post('/:id/cargo/clippy', async (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    if (!isCargoProject(dir)) {
+      res.status(400).json({ error: 'No Cargo.toml in session root' });
+      return;
+    }
+    const flavor = parseCargoFlavor(req.body?.flavor);
+    const v = cargoValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const result = await cargoClippy(dir, flavor);
+    const buildId = persistCargoBuild(req.params.id as string, flavor, result);
+    res.json({
+      build_id: buildId,
+      flavor: cargoFlavorDirName(flavor),
+      success: result.success,
+      duration_ms: result.durationMs,
+      diagnostics: result.diagnostics,
+      log: result.log,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/cargo/test
+router.post('/:id/cargo/test', async (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    if (!isCargoProject(dir)) {
+      res.status(400).json({ error: 'No Cargo.toml in session root' });
+      return;
+    }
+    const flavor = parseCargoFlavor(req.body?.flavor);
+    const v = cargoValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const result = await cargoTest(dir, flavor, { timeoutMs: req.body?.timeout_ms });
+    res.json({
+      success: result.exitCode === 0,
+      exit_code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      duration_ms: result.durationMs,
+      command: result.command,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/builds
+router.get('/:id/cargo/builds', (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const builds = db.prepare(`
+      SELECT id, session_id, flavor, success, duration_ms, diagnostic_count, created_at
+      FROM builds WHERE session_id = ? ORDER BY created_at DESC LIMIT ?
+    `).all(req.params.id, limit);
+    res.json(builds);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/builds/:buildId
+router.get('/:id/cargo/builds/:buildId', (req: Request, res: Response) => {
+  try {
+    const build = db.prepare('SELECT * FROM builds WHERE id = ? AND session_id = ?').get(req.params.buildId, req.params.id);
+    if (!build) {
+      res.status(404).json({ error: 'Build not found' });
+      return;
+    }
+    const diagnostics = db.prepare('SELECT file, line, col AS column, severity, message FROM build_diagnostics WHERE build_id = ?').all(req.params.buildId) as CargoDiagnostic[];
+    res.json({ ...build, diagnostics });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/binaries?profile=dev
+router.get('/:id/cargo/binaries', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    const flavor = parseCargoFlavor({ profile: req.query.profile ?? 'dev' });
+    const v = cargoValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const binaries = listCargoTargets(dir, flavor);
+    res.json({ flavor: cargoFlavorDirName(flavor), binaries });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/artifacts
+router.get('/:id/cargo/artifacts', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    res.json({ tree: cargoListArtifactTree(dir) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/artifacts/content?path=<rel>
+router.get('/:id/cargo/artifacts/content', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const result = cargoReadArtifactText(dir, rel);
+    if (!result) {
+      res.status(404).json({ error: 'Artifact not found or not readable' });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// GET /api/sessions/:id/cargo/artifacts/download?path=<rel>
+router.get('/:id/cargo/artifacts/download', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    const rel = String(req.query.path ?? '');
+    const info = cargoStatArtifact(dir, rel);
+    if (!info || info.isDir) {
+      res.status(404).json({ error: 'Artifact not found' });
+      return;
+    }
+    const abs = cargoResolveArtifactPath(dir, rel);
+    if (!abs) {
+      res.status(400).json({ error: 'Invalid artifact path' });
+      return;
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="${info.name.replace(/"/g, '')}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(info.size));
+    fs.createReadStream(abs).pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/sessions/:id/cargo/clean
+router.post('/:id/cargo/clean', (req: Request, res: Response) => {
+  try {
+    const dir = loadCargoSessionDir(req, res);
+    if (!dir) return;
+    const all = !!req.body?.all;
+    if (all) {
+      const removed = cargoCleanAll(dir);
+      res.json({ removed, scope: 'all' });
+      return;
+    }
+    const flavor = parseCargoFlavor(req.body?.flavor);
+    const v = cargoValidateFlavor(flavor);
+    if (!v.valid) {
+      res.status(400).json({ error: v.error });
+      return;
+    }
+    const removed = cargoCleanFlavor(dir, flavor);
+    res.json({ removed, scope: cargoFlavorDirName(flavor) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

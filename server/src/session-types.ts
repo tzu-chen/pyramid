@@ -1,7 +1,7 @@
 // Session type domain. Lean and Notebook are distinct, structured session types;
 // every other type is a "freeform-like" language session (python/cpp/ocaml/julia)
 // that shares the same single-file/project workbench, terminal, and LSP plumbing.
-export const FREEFORM_SESSION_TYPES = ['python', 'cpp', 'ocaml', 'julia'] as const;
+export const FREEFORM_SESSION_TYPES = ['python', 'cpp', 'ocaml', 'julia', 'rust'] as const;
 
 export type FreeformSessionType = (typeof FREEFORM_SESSION_TYPES)[number];
 export type SessionType = FreeformSessionType | 'lean' | 'notebook';

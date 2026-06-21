@@ -21,7 +21,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     session_type TEXT NOT NULL DEFAULT 'python'
-      CHECK (session_type IN ('python', 'cpp', 'ocaml', 'julia', 'lean', 'notebook')),
+      CHECK (session_type IN ('python', 'cpp', 'ocaml', 'julia', 'rust', 'lean', 'notebook')),
     language TEXT NOT NULL DEFAULT 'python',
     tags TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'active'
@@ -270,6 +270,64 @@ try {
         SELECT id, title,
                CASE WHEN session_type = 'freeform' THEN language ELSE session_type END,
                language, tags, status, links, notes, working_dir, created_at, updated_at
+        FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_new RENAME TO sessions;
+      CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(session_type);
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+      CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+
+      CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+        INSERT INTO sessions_fts(rowid, title, notes, tags)
+        VALUES (NEW.rowid, NEW.title, NEW.notes, NEW.tags);
+      END;
+      CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+        INSERT INTO sessions_fts(sessions_fts, rowid, title, notes, tags)
+        VALUES ('delete', OLD.rowid, OLD.title, OLD.notes, OLD.tags);
+      END;
+      CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
+        INSERT INTO sessions_fts(sessions_fts, rowid, title, notes, tags)
+        VALUES ('delete', OLD.rowid, OLD.title, OLD.notes, OLD.tags);
+        INSERT INTO sessions_fts(rowid, title, notes, tags)
+        VALUES (NEW.rowid, NEW.title, NEW.notes, NEW.tags);
+      END;
+      INSERT INTO sessions_fts(sessions_fts) VALUES('rebuild');
+    `);
+  }
+}
+
+// Migration: expand sessions.session_type CHECK to include 'rust'. Probe by
+// attempting an insert with the new type; if the old CHECK rejects it, rebuild
+// the sessions table with the expanded CHECK (rows copy through unchanged) and
+// recreate the FTS triggers. Same probe-and-rebuild pattern as above.
+try {
+  const probe = db.transaction(() => {
+    db.prepare(`INSERT INTO sessions (id, title, session_type, language, working_dir, created_at, updated_at)
+      VALUES ('__probe__', '', 'rust', '', '', '', '')`).run();
+    throw new Error('rollback');
+  });
+  try { probe(); } catch (e) { if ((e as Error).message !== 'rollback') throw e; }
+} catch (err) {
+  const msg = (err as Error).message || '';
+  if (/CHECK constraint failed/i.test(msg) || /constraint/i.test(msg)) {
+    db.exec(`
+      CREATE TABLE sessions_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        session_type TEXT NOT NULL DEFAULT 'python'
+          CHECK (session_type IN ('python', 'cpp', 'ocaml', 'julia', 'rust', 'lean', 'notebook')),
+        language TEXT NOT NULL DEFAULT 'python',
+        tags TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'paused', 'completed', 'archived')),
+        links TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NOT NULL DEFAULT '',
+        working_dir TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO sessions_new
+        SELECT id, title, session_type, language, tags, status, links, notes, working_dir, created_at, updated_at
         FROM sessions;
       DROP TABLE sessions;
       ALTER TABLE sessions_new RENAME TO sessions;

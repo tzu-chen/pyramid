@@ -6,6 +6,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { useLeanLsp } from '../../hooks/useLeanLsp';
 import { useCppLsp, type CppDocumentSymbol } from '../../hooks/useCppLsp';
 import { useOcamlLsp, type OcamlDocumentSymbol } from '../../hooks/useOcamlLsp';
+import { useRustLsp, type RustDocumentSymbol } from '../../hooks/useRustLsp';
 import { useDapSession, type DapStackFrame } from '../../hooks/useDapSession';
 import { fileService } from '../../services/fileService';
 import { executionService } from '../../services/executionService';
@@ -52,6 +53,13 @@ import {
   duneFlavorFromId,
   type DuneProfile,
 } from '../../services/duneBuildService';
+import {
+  cargoBuildService,
+  CARGO_PROFILE_PRESETS,
+  cargoFlavorFromId,
+  type CargoProfile,
+} from '../../services/cargoBuildService';
+import { cargoEnvService } from '../../services/cargoEnvService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
@@ -66,6 +74,9 @@ const CMAKE_FLAVOR_KEY = 'pyramid_cmake_flavor';
 const CMAKE_TARGET_KEY = 'pyramid_cmake_target';
 const DUNE_PROFILE_KEY = 'pyramid_dune_profile';
 const DUNE_TARGET_KEY = 'pyramid_dune_target';
+const CARGO_PROFILE_KEY = 'pyramid_cargo_profile';
+const CARGO_TARGET_KEY = 'pyramid_cargo_target';
+const CARGO_CLIPPY_KEY = 'pyramid_cargo_clippy';
 const PANEL_COLLAPSED_KEY = 'pyramid_panel_collapsed';
 
 // Files clangd should syntax-check. Anything else (CMakeLists.txt, *.txt,
@@ -76,6 +87,9 @@ const CPP_SOURCE_EXTS = new Set(['cpp', 'cc', 'cxx', 'c', 'h', 'hpp', 'hh', 'hxx
 // Files ocamllsp should syntax-check. Anything else (dune, dune-project, *.txt,
 // *.md, ...) must not be opened in ocamllsp.
 const OCAML_SOURCE_EXTS = new Set(['ml', 'mli']);
+
+// Files rust-analyzer should syntax-check. Cargo.toml, *.md, etc. are not opened.
+const RUST_SOURCE_EXTS = new Set(['rs']);
 
 function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -181,6 +195,15 @@ function SessionPage() {
   const ocamlProjectPath = isFreeformOcaml ? (session?.absolute_working_dir ?? null) : null;
   const ocamlLsp = useOcamlLsp(id, isFreeformOcaml && !suspended, ocamlProjectPath);
 
+  // Rust LSP hook (rust-analyzer) — only enabled for freeform Rust sessions.
+  // `clippyOnSave` switches rust-analyzer's check command between `cargo check`
+  // and clippy; toggling it reconnects the LSP with the new check command.
+  const isFreeformRust = isFreeform && session?.language === 'rust';
+  const rustProjectPath = isFreeformRust ? (session?.absolute_working_dir ?? null) : null;
+  const [clippyOnSave, setClippyOnSave] = useState<boolean>(() => localStorage.getItem(CARGO_CLIPPY_KEY) === '1');
+  const rustLsp = useRustLsp(id, isFreeformRust && !suspended, rustProjectPath, clippyOnSave);
+  useEffect(() => { localStorage.setItem(CARGO_CLIPPY_KEY, clippyOnSave ? '1' : '0'); }, [clippyOnSave]);
+
   // CMake-specific state (only relevant for freeform C++ sessions whose dir
   // contains a CMakeLists.txt — populated lazily after session load).
   const [isCmakeProject, setIsCmakeProject] = useState(false);
@@ -211,6 +234,23 @@ function SessionPage() {
   const [duneBuildError, setDuneBuildError] = useState<string | null>(null);
   const [duneHistoryRefresh, setDuneHistoryRefresh] = useState(0);
 
+  // Cargo-specific state (only relevant for freeform Rust sessions whose dir
+  // contains a Cargo.toml — always true after scaffold, populated lazily).
+  const [isCargoProject, setIsCargoProject] = useState(false);
+  const [cargoProfileId, setCargoProfileId] = useState<CargoProfile>(() => {
+    return (localStorage.getItem(CARGO_PROFILE_KEY) as CargoProfile) || 'dev';
+  });
+  const [cargoTarget, setCargoTarget] = useState<string>(() => {
+    return localStorage.getItem(CARGO_TARGET_KEY) || '';
+  });
+  const [cargoTargets, setCargoTargets] = useState<string[]>([]);
+  const [cargoBuilding, setCargoBuilding] = useState(false);
+  const [cargoTesting, setCargoTesting] = useState(false);
+  const [cargoClippyRunning, setCargoClippyRunning] = useState(false);
+  const [cargoLastBuild, setCargoLastBuild] = useState<BuildResponse | null>(null);
+  const [cargoBuildError, setCargoBuildError] = useState<string | null>(null);
+  const [cargoHistoryRefresh, setCargoHistoryRefresh] = useState(0);
+
   // Debugger state. Only meaningful when isFreeformOcaml && isDuneProject.
   // Breakpoints are session-scoped, in-memory (file path → 1-indexed lines).
   const [breakpoints, setBreakpoints] = useState<Map<string, number[]>>(new Map());
@@ -238,6 +278,9 @@ function SessionPage() {
   // OCaml outline symbols (same shape, separate state to keep tabs simple)
   const [ocamlSymbols, setOcamlSymbols] = useState<OcamlDocumentSymbol[]>([]);
   const [ocamlSymbolsLoading, setOcamlSymbolsLoading] = useState(false);
+  // Rust outline symbols (same shape).
+  const [rustSymbols, setRustSymbols] = useState<RustDocumentSymbol[]>([]);
+  const [rustSymbolsLoading, setRustSymbolsLoading] = useState(false);
   const debouncedFileContent = useDebounce(fileContent, 800);
 
   const debouncedNotes = useDebounce(notes, 1500);
@@ -381,7 +424,7 @@ function SessionPage() {
     lspOpenedFileRef.current = null;
     fileUriRef.current = null;
     setEditorCursorLine(null);
-  }, [activeFileId, lsp.initialized, cppLsp.initialized, ocamlLsp.initialized]);
+  }, [activeFileId, lsp.initialized, cppLsp.initialized, ocamlLsp.initialized, rustLsp.initialized]);
 
   // Send didOpen and set fileUriRef when all conditions are met
   useEffect(() => {
@@ -483,6 +526,47 @@ function SessionPage() {
     return () => { cancelled = true; };
   }, [isFreeformOcaml, ocamlLsp, activeFileId, debouncedFileContent]);
 
+  // Rust didOpen flow — only *.rs files go to rust-analyzer.
+  useEffect(() => {
+    if (!isFreeformRust || !rustLsp.initialized || !session?.files || !activeFileId) return;
+    const file = session.files.find(f => f.id === activeFileId);
+    if (!file) return;
+    const ext = file.filename.split('.').pop()?.toLowerCase() ?? '';
+    if (!RUST_SOURCE_EXTS.has(ext)) {
+      fileUriRef.current = null;
+      lspOpenedFileRef.current = null;
+      return;
+    }
+    const uri = getFileUri(file.filename);
+    fileUriRef.current = uri;
+    if (lspOpenedFileRef.current !== uri) {
+      rustLsp.sendDidOpen(uri, fileContent);
+      lspOpenedFileRef.current = uri;
+    }
+  }, [isFreeformRust, rustLsp.initialized, fileContent, activeFileId, session?.files, getFileUri, rustLsp.sendDidOpen]);
+
+  // Rust outline: same pattern as C++/OCaml.
+  useEffect(() => {
+    if (!isFreeformRust || !rustLsp.initialized || !fileUriRef.current) {
+      setRustSymbols([]);
+      return;
+    }
+    let cancelled = false;
+    setRustSymbolsLoading(true);
+    rustLsp
+      .requestDocumentSymbols(fileUriRef.current)
+      .then((syms) => {
+        if (!cancelled) setRustSymbols(syms);
+      })
+      .catch(() => {
+        if (!cancelled) setRustSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRustSymbolsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isFreeformRust, rustLsp, activeFileId, debouncedFileContent]);
+
   // Auto-save notes
   useEffect(() => {
     if (id && debouncedNotes !== prevNotesRef.current && notesEditing) {
@@ -525,6 +609,8 @@ function SessionPage() {
   cppLspRef.current = cppLsp;
   const ocamlLspRef = useRef(ocamlLsp);
   ocamlLspRef.current = ocamlLsp;
+  const rustLspRef = useRef(rustLsp);
+  rustLspRef.current = rustLsp;
 
   const handleSaveFile = useCallback(async (content: string) => {
     if (id && activeFileId) {
@@ -538,9 +624,11 @@ function SessionPage() {
         cppLspRef.current.sendDidChange(fileUriRef.current, content);
       } else if (isFreeformOcaml && fileUriRef.current) {
         ocamlLspRef.current.sendDidChange(fileUriRef.current, content);
+      } else if (isFreeformRust && fileUriRef.current) {
+        rustLspRef.current.sendDidChange(fileUriRef.current, content);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust]);
 
   const handleCursorChange = useCallback((position: { line: number; character: number }) => {
     if (isLean && fileUriRef.current) {
@@ -672,9 +760,123 @@ function SessionPage() {
     }
   }, [id, duneBuilding, duneProfileId, duneTarget, applyDuneBuildResponse]);
 
-  // ─── Debugger (earlybird DAP) ─────────────────────────────────────────────
+  // ─── Cargo (Rust) build pipeline ──────────────────────────────────────────
 
-  const debugEnabled = !!isFreeformOcaml && isDuneProject && !suspended;
+  useEffect(() => {
+    if (!id || !isFreeformRust) {
+      setIsCargoProject(false);
+      setCargoTargets([]);
+      return;
+    }
+    cargoBuildService.status(id)
+      .then((s) => setIsCargoProject(s.is_cargo_project))
+      .catch(() => setIsCargoProject(false));
+  }, [id, isFreeformRust, session?.files]);
+
+  useEffect(() => { localStorage.setItem(CARGO_PROFILE_KEY, cargoProfileId); }, [cargoProfileId]);
+  useEffect(() => {
+    if (cargoTarget) localStorage.setItem(CARGO_TARGET_KEY, cargoTarget);
+    else localStorage.removeItem(CARGO_TARGET_KEY);
+  }, [cargoTarget]);
+
+  const refreshCargoTargets = useCallback(async (profile: CargoProfile) => {
+    if (!id || !isCargoProject) return;
+    try {
+      const { binaries } = await cargoBuildService.binaries(id, { profile });
+      setCargoTargets(binaries.map(b => b.name));
+    } catch {
+      setCargoTargets([]);
+    }
+  }, [id, isCargoProject]);
+
+  useEffect(() => {
+    if (isCargoProject) refreshCargoTargets(cargoProfileId);
+  }, [isCargoProject, cargoProfileId, refreshCargoTargets]);
+
+  const applyCargoBuildResponse = useCallback((resp: BuildResponse) => {
+    setCargoLastBuild(resp);
+    setCargoHistoryRefresh(n => n + 1);
+    refreshCargoTargets(cargoProfileId);
+    if (!cargoTarget && resp.binary_paths.length === 1) {
+      const name = resp.binary_paths[0].split('/').pop() || '';
+      if (name) setCargoTarget(name);
+    }
+  }, [cargoTarget, cargoProfileId, refreshCargoTargets]);
+
+  const handleCargoBuild = useCallback(async () => {
+    if (!id || cargoBuilding) return;
+    setCargoBuilding(true);
+    setCargoBuildError(null);
+    setActiveTab('build');
+    try {
+      const flavor = cargoFlavorFromId(cargoProfileId);
+      const resp = await cargoBuildService.build(id, flavor, cargoTarget ? { target: cargoTarget } : undefined);
+      applyCargoBuildResponse(resp);
+    } catch (err) {
+      setCargoBuildError((err as Error).message);
+    } finally {
+      setCargoBuilding(false);
+    }
+  }, [id, cargoBuilding, cargoProfileId, cargoTarget, applyCargoBuildResponse]);
+
+  const handleCargoClippy = useCallback(async () => {
+    if (!id || cargoClippyRunning) return;
+    setCargoClippyRunning(true);
+    setCargoBuildError(null);
+    setActiveTab('build');
+    try {
+      const flavor = cargoFlavorFromId(cargoProfileId);
+      const resp = await cargoBuildService.clippy(id, flavor);
+      applyCargoBuildResponse({
+        build_id: resp.build_id,
+        flavor: resp.flavor,
+        success: resp.success,
+        duration_ms: resp.duration_ms,
+        diagnostics: resp.diagnostics,
+        log: resp.log,
+        binary_paths: [],
+      });
+    } catch (err) {
+      setCargoBuildError((err as Error).message);
+    } finally {
+      setCargoClippyRunning(false);
+    }
+  }, [id, cargoClippyRunning, cargoProfileId, applyCargoBuildResponse]);
+
+  const handleCargoTest = useCallback(async () => {
+    if (!id || cargoTesting) return;
+    setCargoTesting(true);
+    setActiveTab('output');
+    try {
+      const flavor = cargoFlavorFromId(cargoProfileId);
+      const resp = await cargoBuildService.test(id, flavor);
+      // Surface the test report in the Output pane as a synthetic run.
+      const synthRun = {
+        id: `cargo-test-${Date.now()}`,
+        session_id: id,
+        file_id: activeFileId ?? '',
+        command: resp.command,
+        exit_code: resp.exit_code,
+        stdout: resp.stdout,
+        stderr: resp.stderr,
+        duration_ms: resp.duration_ms,
+        created_at: new Date().toISOString(),
+        peak_rss_bytes: null,
+      } as ExecutionRun;
+      setRuns(prev => [synthRun, ...prev]);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCargoTesting(false);
+    }
+  }, [id, cargoTesting, cargoProfileId, activeFileId]);
+
+  // ─── Debugger (earlybird / lldb DAP) ──────────────────────────────────────
+
+  // Debug applies to OCaml (dune + earlybird) and Rust (cargo + lldb). Both use
+  // the same generic DAP machinery below.
+  const debugProjectReady = (isFreeformOcaml && isDuneProject) || (isFreeformRust && isCargoProject);
+  const debugEnabled = debugProjectReady && !suspended;
   const [debugStoppedLocation, setDebugStoppedLocation] = useState<{ file: string; line: number } | null>(null);
 
   const dap = useDapSession({
@@ -691,25 +893,29 @@ function SessionPage() {
     },
   });
 
-  // Refresh available bytecode targets whenever the dune profile changes or a
-  // build completes — both are signals that .bc files may have appeared.
+  // Refresh available debug targets whenever the profile changes or a build
+  // completes — both signal that debuggable artifacts may have appeared. OCaml
+  // returns .bc targets (profile-specific); Rust returns target/debug bins (the
+  // server ignores the profile param for Rust).
   useEffect(() => {
-    if (!id || !debugEnabled || !isDuneProject) {
+    if (!id || !debugEnabled || !(isDuneProject || isCargoProject)) {
       setDebugTargets([]);
       setDebugTargetPaths(new Map());
       return;
     }
     let cancelled = false;
+    const debugProfile = isFreeformRust ? 'dev' : duneProfileId;
+    const runTarget = isFreeformRust ? cargoTarget : duneTarget;
     api.get<{ profile: string; binaries: Array<{ name: string; path: string }> }>(
-      `/sessions/${id}/debug/binaries?profile=${duneProfileId}`
+      `/sessions/${id}/debug/binaries?profile=${debugProfile}`
     ).then((resp) => {
       if (cancelled) return;
       const names = resp.binaries.map((b) => b.name);
       setDebugTargets(names);
       setDebugTargetPaths(new Map(resp.binaries.map((b) => [b.name, b.path] as const)));
-      // Auto-pick: prefer current dune run target if it has a .bc, else first.
+      // Auto-pick: prefer the current run target if it's debuggable, else first.
       if (!selectedDebugTarget || !names.includes(selectedDebugTarget)) {
-        const pick = (duneTarget && names.includes(duneTarget)) ? duneTarget : (names[0] ?? '');
+        const pick = (runTarget && names.includes(runTarget)) ? runTarget : (names[0] ?? '');
         setSelectedDebugTarget(pick);
       }
     }).catch(() => {
@@ -719,7 +925,7 @@ function SessionPage() {
       }
     });
     return () => { cancelled = true; };
-  }, [id, debugEnabled, isDuneProject, duneProfileId, duneHistoryRefresh, duneTarget, selectedDebugTarget]);
+  }, [id, debugEnabled, isDuneProject, isCargoProject, isFreeformRust, duneProfileId, duneHistoryRefresh, cargoHistoryRefresh, duneTarget, cargoTarget, selectedDebugTarget]);
 
   const handleDebugStart = useCallback(async (stopOnEntry: boolean) => {
     if (!selectedDebugTarget) return;
@@ -845,6 +1051,37 @@ function SessionPage() {
           });
           setActiveTab('build');
         }
+      } else if (isCargoProject) {
+        const flavor = cargoFlavorFromId(cargoProfileId);
+        const result = await executionService.execute(id, {
+          file_id: activeFileId ?? undefined,
+          flavor,
+          target: cargoTarget || undefined,
+        });
+        if (result.kind === 'ran') {
+          applyCargoBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: true,
+            duration_ms: result.build_duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.build_log,
+            binary_paths: [result.binary_path],
+          });
+          setRuns(prev => [result.run, ...prev]);
+          setActiveTab('output');
+        } else if (result.kind === 'build_failed' || result.kind === 'no_binary') {
+          applyCargoBuildResponse({
+            build_id: result.build_id,
+            flavor: result.flavor,
+            success: false,
+            duration_ms: result.duration_ms,
+            diagnostics: result.diagnostics,
+            log: result.log,
+            binary_paths: [],
+          });
+          setActiveTab('build');
+        }
       } else if (isCmakeProject) {
         const flavor = flavorFromId(cmakeFlavorId);
         const result = await executionService.execute(id, {
@@ -956,9 +1193,11 @@ function SessionPage() {
         cppLspRef.current.sendDidChange(fileUriRef.current, code);
       } else if (isFreeformOcaml && fileUriRef.current) {
         ocamlLspRef.current.sendDidChange(fileUriRef.current, code);
+      } else if (isFreeformRust && fileUriRef.current) {
+        rustLspRef.current.sendDidChange(fileUriRef.current, code);
       }
     }
-  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isNotebook]);
+  }, [id, activeFileId, isLean, isFreeformCpp, isFreeformOcaml, isFreeformRust, isNotebook]);
 
   const updateLinks = async (newLinks: SessionLink[]) => {
     if (!id || !session) return;
@@ -1125,6 +1364,41 @@ function SessionPage() {
     return await ocamlLspRef.current.requestHover(fileUriRef.current, line, character);
   }, [isFreeformOcaml]);
 
+  // Rust LSP: completion + hover sources for the editor
+  const rustExternalCompletion = useCallback(async (code: string, cursorPos: number) => {
+    if (!isFreeformRust || !fileUriRef.current) return null;
+    let line = 0;
+    let lineStart = 0;
+    for (let i = 0; i < cursorPos; i++) {
+      if (code.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+    }
+    const character = cursorPos - lineStart;
+    const items = await rustLspRef.current.requestCompletion(fileUriRef.current, line, character);
+    if (!items || items.length === 0) return null;
+    // Replacement range: Rust identifiers are [A-Za-z0-9_].
+    let from = cursorPos;
+    while (from > 0) {
+      const c = code.charCodeAt(from - 1);
+      const isWord = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+      if (!isWord) break;
+      from--;
+    }
+    return {
+      from,
+      to: cursorPos,
+      matches: items.slice(0, 100).map((it) => ({
+        label: it.insertText || it.label,
+        type: 'variable',
+        detail: it.detail,
+      })),
+    };
+  }, [isFreeformRust]);
+
+  const rustExternalHover = useCallback(async (line: number, character: number) => {
+    if (!isFreeformRust || !fileUriRef.current) return null;
+    return await rustLspRef.current.requestHover(fileUriRef.current, line, character);
+  }, [isFreeformRust]);
+
   if (loading) return <div className={styles.loading}>Loading...</div>;
   if (error) return <div className={styles.error}>Error: {error}</div>;
   if (!session) return <div className={styles.error}>Session not found</div>;
@@ -1141,6 +1415,8 @@ function SessionPage() {
   const activeFileIsCpp = isFreeformCpp && CPP_SOURCE_EXTS.has(activeFileExt);
   // Same gating for ocamllsp + *.ml/*.mli.
   const activeFileIsOcaml = isFreeformOcaml && OCAML_SOURCE_EXTS.has(activeFileExt);
+  // Same gating for rust-analyzer + *.rs.
+  const activeFileIsRust = isFreeformRust && RUST_SOURCE_EXTS.has(activeFileExt);
 
   // Lake status badge variant
   const lakeStatusVariant = lakeStatus === 'ready' ? 'success'
@@ -1175,6 +1451,9 @@ function SessionPage() {
           )}
           {isDuneProject && (
             <Badge label={`dune: ${duneProfileId}`} variant="default" />
+          )}
+          {isCargoProject && (
+            <Badge label={`cargo: ${cargoProfileId}`} variant="default" />
           )}
         </div>
         <div className={styles.toolbarRight}>
@@ -1287,10 +1566,71 @@ function SessionPage() {
                   </button>
                 </>
               )}
+              {isCargoProject && (
+                <>
+                  <select
+                    className={styles.flavorSelect}
+                    value={cargoProfileId}
+                    onChange={e => setCargoProfileId(e.target.value as CargoProfile)}
+                    title="Cargo profile"
+                  >
+                    {CARGO_PROFILE_PRESETS.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className={styles.flavorSelect}
+                    value={cargoTarget}
+                    onChange={e => setCargoTarget(e.target.value)}
+                    title="Run target (bin)"
+                  >
+                    <option value="">(auto)</option>
+                    {cargoTargets.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleCargoBuild}
+                    disabled={cargoBuilding}
+                  >
+                    {cargoBuilding ? 'Building...' : 'Build'}
+                  </button>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleCargoTest}
+                    disabled={cargoTesting}
+                    title="cargo test"
+                  >
+                    {cargoTesting ? 'Testing...' : 'Test'}
+                  </button>
+                  <button
+                    className={styles.buildButton}
+                    onClick={handleCargoClippy}
+                    disabled={cargoClippyRunning}
+                    title="cargo clippy"
+                  >
+                    {cargoClippyRunning ? 'Clippy...' : 'Clippy'}
+                  </button>
+                  <label className={styles.flavorSelect} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }} title="Use clippy as rust-analyzer's on-save check">
+                    <input type="checkbox" checked={clippyOnSave} onChange={e => setClippyOnSave(e.target.checked)} />
+                    clippy-on-save
+                  </label>
+                  <button
+                    className={styles.buildButton}
+                    onClick={() => setActiveTab('debug')}
+                    disabled={dap.state === 'connecting' || dap.state === 'initializing'}
+                    title={debugTargets.length === 0 ? 'No debuggable binaries — build first (and install lldb-dap)' : 'Open debug panel'}
+                  >
+                    {dap.state === 'stopped' ? 'Debug (stopped)' :
+                      dap.state === 'running' ? 'Debug (running)' : 'Debug'}
+                  </button>
+                </>
+              )}
               <button className={styles.runButton} onClick={handleExecute} disabled={executing} title="Run (Ctrl+Enter)">
-                {executing ? ((isCmakeProject || isDuneProject) ? 'Building/Running...' : 'Running...') : 'Run'}
+                {executing ? ((isCmakeProject || isDuneProject || isCargoProject) ? 'Building/Running...' : 'Running...') : 'Run'}
               </button>
-              {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
+              {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success) || (latestRun && (latestRun.exit_code !== 0 || latestRun.stderr))) && (
                 <button className={styles.askClaudeButton} onClick={handleAskClaude}>Ask Claude</button>
               )}
             </>
@@ -1426,20 +1766,23 @@ function SessionPage() {
                       value={fileContent}
                       language={session.language}
                       onChange={handleSaveFile}
-                      onCursorChange={activeFileIsCpp || activeFileIsOcaml ? handleCursorChange : undefined}
+                      onCursorChange={activeFileIsCpp || activeFileIsOcaml || activeFileIsRust ? handleCursorChange : undefined}
                       diagnostics={
                         activeFileIsCpp ? cppLsp.diagnostics
                         : activeFileIsOcaml ? ocamlLsp.diagnostics
+                        : activeFileIsRust ? rustLsp.diagnostics
                         : undefined
                       }
                       externalCompletion={
                         activeFileIsCpp ? cppExternalCompletion
                         : activeFileIsOcaml ? ocamlExternalCompletion
+                        : activeFileIsRust ? rustExternalCompletion
                         : undefined
                       }
                       externalHover={
                         activeFileIsCpp ? cppExternalHover
                         : activeFileIsOcaml ? ocamlExternalHover
+                        : activeFileIsRust ? rustExternalHover
                         : undefined
                       }
                       fontSize={fontSize}
@@ -1448,7 +1791,7 @@ function SessionPage() {
                       onJumpRef={onJumpRef}
                       onGetSelectionRef={activeFileIsCpp ? getSelectionRef : undefined}
                       setHighlightedLineRef={activeFileIsCpp ? setHighlightedLineRef : undefined}
-                      showBreakpointGutter={activeFileIsOcaml && isDuneProject}
+                      showBreakpointGutter={(activeFileIsOcaml && isDuneProject) || (activeFileIsRust && isCargoProject)}
                       breakpoints={activeFileBreakpoints}
                       onBreakpointToggle={handleBreakpointToggle}
                       debugStoppedLine={activeFileStoppedLine}
@@ -1537,18 +1880,18 @@ function SessionPage() {
                     Output
                   </button>
                 )}
-                {(isCmakeProject || isDuneProject) && (
+                {(isCmakeProject || isDuneProject || isCargoProject) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'build' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('build')}
                   >
                     Build
-                    {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success)) && (
+                    {((cmakeLastBuild && !cmakeLastBuild.success) || (duneLastBuild && !duneLastBuild.success) || (cargoLastBuild && !cargoLastBuild.success)) && (
                       <span className={styles.tabBadge}>!</span>
                     )}
                   </button>
                 )}
-                {(isCmakeProject || isDuneProject) && (
+                {(isCmakeProject || isDuneProject || isCargoProject) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'artifacts' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('artifacts')}
@@ -1556,7 +1899,7 @@ function SessionPage() {
                     Artifacts
                   </button>
                 )}
-                {(isFreeformCpp || isFreeformOcaml) && (
+                {(isFreeformCpp || isFreeformOcaml || isFreeformRust) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'outline' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('outline')}
@@ -1572,7 +1915,7 @@ function SessionPage() {
                     Asm
                   </button>
                 )}
-                {isFreeformOcaml && isDuneProject && (
+                {((isFreeformOcaml && isDuneProject) || (isFreeformRust && isCargoProject)) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'debug' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('debug')}
@@ -1589,7 +1932,7 @@ function SessionPage() {
                     Variables
                   </button>
                 )}
-                {hasVenv && (
+                {(hasVenv || isFreeformRust) && (
                   <button
                     className={`${styles.tab} ${activeTab === 'packages' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('packages')}
@@ -1836,6 +2179,16 @@ function SessionPage() {
               />
             )}
 
+            {/* Rust: Outline (rust-analyzer documentSymbol) */}
+            {activeTab === 'outline' && isFreeformRust && (
+              <OutlinePanel
+                symbols={rustSymbols}
+                loading={rustSymbolsLoading}
+                initialized={rustLsp.initialized}
+                onSelect={handleOutlineSelect}
+              />
+            )}
+
             {/* Notebook: Variable Inspector */}
             {isNotebook && (
               <div style={{ display: activeTab === 'variables' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
@@ -1907,8 +2260,35 @@ function SessionPage() {
               />
             )}
 
-            {/* OCaml: Debugger panel (earlybird DAP) */}
-            {activeTab === 'debug' && isFreeformOcaml && isDuneProject && (
+            {/* Cargo: Build panel */}
+            {activeTab === 'build' && isCargoProject && (
+              <div className={styles.buildTabPane}>
+                {cargoBuildError && (
+                  <div className={styles.buildError}>{cargoBuildError}</div>
+                )}
+                <BuildPanel
+                  sessionId={id!}
+                  latest={cargoLastBuild}
+                  refreshKey={cargoHistoryRefresh}
+                  fetchHistory={cargoBuildService.history}
+                  emptyPlaceholder="Click Build to run cargo build for the active profile, or Clippy for lints."
+                  onDiagnosticClick={handleDiagnosticClick}
+                />
+              </div>
+            )}
+
+            {/* Cargo: Artifact browser */}
+            {activeTab === 'artifacts' && isCargoProject && (
+              <ArtifactBrowser
+                sessionId={id!}
+                refreshKey={cargoHistoryRefresh}
+                service={cargoBuildService}
+                rootLabel="target/"
+              />
+            )}
+
+            {/* OCaml / Rust: Debugger panel (earlybird / lldb DAP) */}
+            {activeTab === 'debug' && ((isFreeformOcaml && isDuneProject) || (isFreeformRust && isCargoProject)) && (
               <DebugPanel
                 state={dap.state}
                 error={dap.error}
@@ -1982,6 +2362,18 @@ function SessionPage() {
             {/* Packages: uv project dependency management (python / notebook) */}
             {activeTab === 'packages' && hasVenv && (
               <PackagesPanel sessionId={id!} refreshKey={packagesRefresh} />
+            )}
+
+            {/* Packages: Cargo dependency management (rust) */}
+            {activeTab === 'packages' && isFreeformRust && (
+              <PackagesPanel
+                sessionId={id!}
+                refreshKey={cargoHistoryRefresh}
+                service={cargoEnvService}
+                lockLabel="Cargo.lock"
+                toolLabel="cargo"
+                addPlaceholder="crate (e.g. serde@1.0)"
+              />
             )}
 
             {/* Reference: embedded API docs (numpy/pandas/cppreference/...) */}

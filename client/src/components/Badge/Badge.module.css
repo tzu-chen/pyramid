@@ -60,6 +60,16 @@
   color: #b884dd;
 }
 
+.rust {
+  background-color: #f6e3da;
+  color: #b7410e;
+}
+
+[data-theme="dark"] .rust {
+  background-color: #3a2018;
+  color: #e0915f;
+}
+
 .lean {
   background-color: #f3d9fa;
   color: var(--color-lean);

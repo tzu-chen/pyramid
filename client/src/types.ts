@@ -1,11 +1,11 @@
 // Freeform language sessions are first-class session types; lean and notebook
 // are the two structured types. "Freeform-like" === anything that isn't lean
 // or notebook (see isFreeformType).
-export const FREEFORM_SESSION_TYPES = ['python', 'cpp', 'ocaml', 'julia'] as const;
+export const FREEFORM_SESSION_TYPES = ['python', 'cpp', 'ocaml', 'julia', 'rust'] as const;
 export type FreeformSessionType = (typeof FREEFORM_SESSION_TYPES)[number];
 export type SessionType = FreeformSessionType | 'lean' | 'notebook';
 export type SessionStatus = 'active' | 'paused' | 'completed' | 'archived';
-export type Language = 'python' | 'julia' | 'cpp' | 'ocaml' | 'lean';
+export type Language = 'python' | 'julia' | 'cpp' | 'ocaml' | 'rust' | 'lean';
 
 export function isFreeformType(sessionType: string): boolean {
   return sessionType !== 'lean' && sessionType !== 'notebook';

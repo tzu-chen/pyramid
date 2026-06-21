@@ -7,6 +7,7 @@ export type BadgeVariant =
   | 'cpp'
   | 'ocaml'
   | 'julia'
+  | 'rust'
   | 'lean'
   | 'notebook'
   | 'success'

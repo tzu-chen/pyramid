@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repo.
 
 ## Project Overview
 
-Pyramid is a **computational workbench** for **Lean 4 proof development**, **freeform numerical/scientific computation** (Python/Julia/C++ with full clangd/CMake support for C++), and **Jupyter-style notebooks**, usable from any device including iPad. Built-in **Claude AI** for error diagnosis, formalization, and implementation help. **Sessions** are the core abstraction — each bundles code, outputs, notes, and provenance links into a logged, searchable unit.
+Pyramid is a **computational workbench** for **Lean 4 proof development**, **freeform numerical/scientific computation** (Python/Julia/C++/OCaml/Rust, with full LSP + build-system support for C++ via clangd/CMake, Rust via rust-analyzer/Cargo, and OCaml via ocamllsp/dune), and **Jupyter-style notebooks**, usable from any device including iPad. Built-in **Claude AI** for error diagnosis, formalization, and implementation help. **Sessions** are the core abstraction — each bundles code, outputs, notes, and provenance links into a logged, searchable unit.
 
 The Lean and C++ experiences are the two most distinctive features. Both ride the same generic **LSP bridge** (`lsp-bridge.ts`): the backend spawns a language server (`lean --server` or `clangd`) per session and proxies LSP JSON-RPC over WebSocket. C++ sessions additionally get a CMake build/run pipeline, artifact browser, document outline, and Compiler Explorer integration.
 
@@ -56,7 +56,12 @@ server/src/
     cpp-lsp.ts         thin wrapper: spawns `clangd`
     cpp-project.ts     drops default `.clangd`
     cpp-build.ts       CMake configure/build/run, diagnostic parser, artifact tree
-    execution.ts       single-file Python/Julia/C++ child-process runner
+    rust-lsp.ts        thin wrapper: spawns `rust-analyzer`
+    rust-project.ts    scaffolds a Cargo package (`cargo init`)
+    rust-dap.ts        thin wrapper: spawns `lldb-dap` (over the generic DAP bridge)
+    cargo-build.ts     Cargo build/run/test/clippy (JSON diagnostics), artifact tree
+    cargo-env.ts       Cargo dependency mgmt (`cargo add`/`remove`/`metadata`)
+    execution.ts       single-file Python/Julia/C++/Rust child-process runner
     notebook-kernel.ts Jupyter kernel lifecycle + WS relay
     jupyter-bridge.py  Python sidecar driving ipykernel; JSON-lines on stdio
     terminal.ts        node-pty shell sessions
@@ -107,23 +112,41 @@ Two modes coexist per freeform C++ session, decided per-execute by `isCmakeProje
 
 **Compiler Explorer (`godbolt.ts`)** — thin REST client for godbolt.org, the **only** external network call (degrades gracefully offline). `GET /api/godbolt/compilers?lang=c++` (cached 6h); `POST /api/godbolt/compile` (256 KB source cap, 20s timeout).
 
+## Rust Integration
+
+Rust is **Cargo-by-default** (unlike C++/OCaml, which start single-file): `rust-project.ts` runs `cargo init --name <slug> --bin --vcs none` **synchronously** on create (fast, offline — no meta table / status polling) and on every `/ws/rust` connect (idempotent → old sessions get promoted). The primary file registered is the real `src/main.rs`. A single-file `rustc -O -o a.out <file> && ./a.out` fallback lives in `execution.ts` for the rare no-`Cargo.toml` case, decided per-execute by `isCargoProject()` (= `existsSync(<dir>/Cargo.toml)`).
+
+**rust-analyzer** (every Rust session): `rust-lsp.ts` spawns it over `LspBridge` (relay `/ws/rust/:sessionId`, gated `session_type==='rust'`). Almost all config is passed by the client in the LSP `initialize` `initializationOptions` (so no CLI args): `check.command` switches between `cargo check` and **clippy** via a "clippy-on-save" toggle; toggling reconnects the LSP. rust-analyzer's flycheck gives **whole-project** diagnostics in the editor for free. Client uses didOpen/didChange, publishDiagnostics, completion, hover, `textDocument/documentSymbol`→`OutlinePanel`.
+
+**Cargo pipeline (`cargo-build.ts`):**
+* **Flavor** — `{ profile: 'dev' | 'release', features?, allFeatures?, noDefaultFeatures? }`. Cargo features are the Rust analog of C++ sanitizer flavors. Build dirs are Cargo's fixed `target/debug` / `target/release` (the `dev` profile → `debug` dir — same spirit as dune's `BUILD_CONTEXT` note).
+* **Build** — `cargo build --message-format=json [--release] [--features …] [--all-features] [--no-default-features]` with `CARGO_TERM_COLOR=never`. Always builds the whole package; `target` only selects which produced bin to run.
+* **Diagnostic parser** — consumes **structured JSON** (one object per stdout line; keeps `reason==='compiler-message'`). Primary span (`spans[].is_primary`) → file/line/col; rustc's `rendered` text (caret diagrams) is kept verbatim as the message; `code.code` (e.g. `E0382`, `clippy::needless_return`) captured. Far more robust than the regex parsing cpp/dune do. The human build log is reconstructed from `rendered` + cargo's stderr (since raw stdout is JSON).
+* **Test / Clippy** — `cargo test` (plain output → Output tab as a synthetic run) and `cargo clippy --message-format=json` (→ same diagnostics path).
+* **Run / Persistence / Cleanup** — picks the top-level executable under `target/<dir>/` (skipping `deps/`/`build/`/etc.); writes `builds` + `build_diagnostics` rows (flavor = `'debug'`/`'release'`); `cleanFlavor`/`cleanAll` remove `target/<dir>` / `target/`.
+* **Artifact browser** — tree of `target/`, kinds `executable`/`archive`(.rlib/.a)/`rmeta`/`shared_lib`/`object`/`depfile`(.d)/`text`/`binary`/`dir`. Same 4000-entry / 512 KB / `..`-rejecting contract as cpp/dune.
+
+**Dependency management (`cargo-env.ts`)** — Rust's best-in-class feature, mapped onto the (generalized) `PackagesPanel`. `cargo add [--dev] <spec>` / `cargo remove`; declared deps parsed from `Cargo.toml` `[dependencies]`/`[dev-dependencies]`; resolved versions from `cargo metadata` (minus workspace members); `Cargo.lock` = lock indicator. Routes under `/api/cargo-env/:sessionId/{packages,manifest}`.
+
+**Debugging (`rust-dap.ts`)** — debug-profile builds are native binaries with DWARF, so debugging points straight at `target/debug/<bin>` — **no bytecode/path-translation dance** (unlike OCaml/earlybird). Prefers `lldb-dap` (else `lldb-vscode`) over the generic `DapBridge` (relay `/ws/debug/:sessionId`, shared with OCaml — branches on language). Reuses `DebugPanel`/`useDapSession`/`VariableInspector`; targets from `GET /sessions/:id/debug/binaries`. Degrades gracefully (emits a "no lldb DAP adapter" message) when no adapter is installed.
+
 ## Other Session Types
 
 * **Notebook** — single `.ipynb` in the working dir (edited as JSON, written via the file-content endpoint; no schema beyond `session_files`). `notebook-kernel.ts` spawns one `jupyter-bridge.py` per session driving `ipykernel`, JSON-lines on stdio, relayed over `/ws/notebook/:sessionId`; idle 30 min. `GET .../kernel` (running), `POST .../kernel/stop` (force restart).
 * **Terminal** (any freeform session, not a type) — `terminal.ts` uses `node-pty` to spawn `$SHELL` (`cwd`=session dir, `xterm-256color`); `/ws/terminal/:sessionId/:tabId`, multiple tabs, 256 KB scrollback replay, idle 30 min.
-* **Freeform (Python/Julia/C++)** — open-ended single-file execution: spawn child (`python3`/`julia`/`g++ && ./a.out`), capture, log. C++ also gets the CMake pipeline.
+* **Freeform (Python/Julia/C++/OCaml/Rust)** — open-ended single-file execution: spawn child (`python3`/`julia`/`g++ && ./a.out`/`ocaml`/`rustc && ./a.out`), capture, log. C++ also gets the CMake pipeline, OCaml the dune pipeline, Rust the Cargo pipeline.
 
 ## Core Concepts
 
-**Sessions** — the fundamental unit. `session_type` ∈ `python | cpp | ocaml | julia | lean | notebook`; `language` mirrors the type for language sessions (`python` for notebook, `lean` for lean). Other fields: `title`, `tags` (JSON TEXT), `status` ∈ `active|paused|completed|archived`, `links` (cross-app, JSON TEXT), `notes` (Markdown+LaTeX), `working_dir` (relative — see Data location), `created_at`/`updated_at` (ISO 8601).
+**Sessions** — the fundamental unit. `session_type` ∈ `python | cpp | ocaml | julia | rust | lean | notebook`; `language` mirrors the type for language sessions (`python` for notebook, `lean` for lean). Other fields: `title`, `tags` (JSON TEXT), `status` ∈ `active|paused|completed|archived`, `links` (cross-app, JSON TEXT), `notes` (Markdown+LaTeX), `working_dir` (relative — see Data location), `created_at`/`updated_at` (ISO 8601).
 
-Each freeform language is its own first-class `session_type`; `lean`/`notebook` are the structured types. Shared "freeform-like" behavior (terminal, clangd/ocamllsp, CMake/dune, artifacts, right-pane layout) applies to **any type that isn't `lean` or `notebook`** — encoded once as `isFreeformType()` in `server/src/session-types.ts` and `client/src/types.ts`, **not** scattered `=== 'freeform'` checks. Adding a freeform language is mostly a `session_type` CHECK migration + a New Session card.
+Each freeform language is its own first-class `session_type`; `lean`/`notebook` are the structured types. Shared "freeform-like" behavior (terminal, clangd/ocamllsp/rust-analyzer, CMake/dune/Cargo, artifacts, right-pane layout) applies to **any type that isn't `lean` or `notebook`** — encoded once as `isFreeformType()` in `server/src/session-types.ts` and `client/src/types.ts`, **not** scattered `=== 'freeform'` checks. `FREEFORM_SESSION_TYPES` lists them (`python, cpp, ocaml, julia, rust`). Adding a freeform language is mostly a `session_type` CHECK migration + a New Session card.
 
 **Session files** — metadata only in `session_files` (`file_type` ∈ `source|output|plot|data|other`); content lives on the filesystem. Working dir supports nested folders (`files.ts` has folder create/rename/delete + tree).
 
 **Execution runs** — `execution_runs`: command, exit_code, stdout, stderr, duration_ms, + nullable `build_id`/`binary_path`/`flavor` for CMake runs.
 
-**Builds / diagnostics** (C++ CMake) — `builds` (flavor, success, duration_ms, diagnostic_count, ANSI-stripped log) + `build_diagnostics` (file, line, col, severity, message).
+**Builds / diagnostics** (C++ CMake / OCaml dune / Rust Cargo) — `builds` (flavor, success, duration_ms, diagnostic_count, ANSI-stripped log) + `build_diagnostics` (file, line, col, severity, message). The three build systems share these tables; `flavor` disambiguates (CMake `Debug-asan…` / dune `dev|release` / Cargo `debug|release`), and sessions are typed by language so the namespaces never collide within a session.
 
 **Cross-app links** — `{ app: navigate|scribe|monolith|granary, ref_type: arxiv_id|paper_id|note_id|flowchart_node|book|project|entry_id, ref_id, label?, page? }`. `book` links into Scribe's PDF library (attachments; `ref_id` = attachment id) with an optional `page`.
 
@@ -131,7 +154,7 @@ Each freeform language is its own first-class `session_type`; `lean`/`notebook` 
 
 SQLite, WAL, FKs on; created/migrated at runtime by `db.ts`. snake_case columns, TEXT ISO-8601 timestamps, TEXT UUID PKs, JSON-as-TEXT (`tags`, `links` — parse/serialize in handlers). Tables: `sessions` (CHECK on `session_type`, `status`), `session_files` (CHECK `file_type`, FK→sessions CASCADE), `execution_runs` (FK→sessions/session_files CASCADE), `lean_session_meta` (UNIQUE `session_id`, CHECK `lake_status`), `builds` (FK→sessions), `build_diagnostics` (FK→builds), `settings` (k/v).
 
-**Migrations** — introspect-and-add columns via `PRAGMA table_info`; **probe-and-rebuild** for CHECK changes: attempt a rolled-back insert to detect the old CHECK, then rename/recreate/copy (translating rows) and re-create FTS triggers. Used to add `notebook` and to split legacy `freeform` into per-language types. **Use probe-and-rebuild for any future CHECK change.**
+**Migrations** — introspect-and-add columns via `PRAGMA table_info`; **probe-and-rebuild** for CHECK changes: attempt a rolled-back insert to detect the old CHECK, then rename/recreate/copy (translating rows) and re-create FTS triggers. Used to add `notebook`, to split legacy `freeform` into per-language types, and to add `rust`. **Use probe-and-rebuild for any future CHECK change.**
 
 **Indices:** `sessions(session_type|status|created_at)`, `session_files(session_id)`, `lean_session_meta(session_id)` UNIQUE, `execution_runs(session_id|created_at)`, `builds(session_id|created_at)`, `build_diagnostics(build_id)`. **FTS5:** `sessions_fts(title, notes, tags)` (content=`sessions`) synced via `sessions_ai/ad/au` triggers (Granary's `entries_fts` pattern).
 
@@ -139,19 +162,20 @@ SQLite, WAL, FKs on; created/migrated at runtime by `db.ts`. snake_case columns,
 
 All under `/api`, RESTful, parameterized SQL only, route-level try-catch. Errors: `{ error: msg }` with 201/400/404/409/413(godbolt cap)/500/502(Scribe/godbolt upstream). Browse `server/src/routes/` for exact shapes; notable contracts:
 
-* **Sessions** — `GET /sessions` (filters: `session_type`, `status`, `language`, `tag`, `search`=FTS5); `GET/PUT/DELETE /sessions/:id` (GET returns files + type data + recent runs + absolute cwd; DELETE also stops LSP/kernel/terminal/Lean project); `POST /sessions` derives `language`, and per type: `lean`→scaffold Lake (bg), `notebook`→seed `.ipynb`, `cpp`→`.clangd`, `ocaml`→`.ocamlformat`/`.merlin`; `PATCH /sessions/:id/status`.
+* **Sessions** — `GET /sessions` (filters: `session_type`, `status`, `language`, `tag`, `search`=FTS5); `GET/PUT/DELETE /sessions/:id` (GET returns files + type data + recent runs + absolute cwd; DELETE also stops LSP/kernel/terminal/Lean project); `POST /sessions` derives `language`, and per type: `lean`→scaffold Lake (bg), `notebook`→seed `.ipynb`, `cpp`→`.clangd`, `ocaml`→`.ocamlformat`/`.merlin`, `rust`→`cargo init` (sync; `src/main.rs` primary); `PATCH /sessions/:id/status`.
 * **Files/folders** — under `/sessions/:id`: `files` (list/create — filename may include subdirs), `tree`, `files/:fileId` (GET/PATCH rename-move/DELETE), `files/:fileId/content` (GET/PUT), `folders` (POST/PATCH/DELETE), `upload` (multer multipart).
 * **Execute** — `POST /sessions/:id/execute`: C++-with-CMake takes `{ flavor, target?, args?, stdin?, reconfigure?, timeout_ms? }` and returns `{ kind: 'ran'|'build_failed'|'no_binary', build_id, flavor, diagnostics, log, run? }`; single-file takes `{ file_id?, timeout_ms?, stdin? }` and returns the run row. `GET /sessions/:id/runs[/:runId]`.
 * **CMake** — `/sessions/:id/cmake/`: `status`, `configure`, `build` (persists builds+diagnostics), `builds[/:buildId]`, `binaries` (`?buildType&sanitizers`), `artifacts`, `artifacts/content?path=`, `artifacts/download?path=`, `clean` (`{all:true}` or `{flavor}`).
+* **Cargo** (Rust) — `/sessions/:id/cargo/`: `status`, `build`, `clippy`, `test`, `builds[/:buildId]`, `binaries` (`?profile`), `artifacts[/content|/download]`, `clean`. Dependency mgmt under `/cargo-env/:sessionId/{packages,manifest}`. (OCaml has the parallel `/sessions/:id/dune/*`.) `GET /sessions/:id/debug/binaries` is shared by OCaml + Rust (branches on language).
 * **Lean** — `/lean/:sessionId/`: `meta`, `build`, `build-output`; WS `/ws/lean/:sessionId`.
 * **Notebooks** — `/notebooks/:sessionId/kernel` (GET running, POST `kernel/stop`); WS `/ws/notebook/:sessionId`.
-* **WS** — `/ws/cpp/:sessionId` (gated on `language==='cpp'`, drops `.clangd`), `/ws/terminal/:sessionId/:tabId`.
+* **WS** — `/ws/cpp/:sessionId` (gated `language==='cpp'`, drops `.clangd`), `/ws/rust/:sessionId` (gated `'rust'`, ensures Cargo package), `/ws/debug/:sessionId` (OCaml earlybird / Rust lldb, branches on language), `/ws/terminal/:sessionId/:tabId`.
 * **Godbolt** — `/godbolt/compilers`, `/godbolt/compile`.
 * **Claude** — `POST /sessions/:id/claude/ask` `{ prompt, context: [{label, content}], mode }` → `{ response, input_tokens, output_tokens }`.
 * **Scribe proxy** — `/scribe/flowcharts`, `/scribe/nodes/search?title=`, `/scribe/nodes/:flowchartId/:nodeKey`.
 * **Stats/settings/health** — `/stats/{overview,heatmap,languages}`, `/settings[/:key]` (incl. `claude_api_key`), `/health`.
 
-**Execution service** (`execution.ts`, single-file): own cwd per session; timeout 30s single-file / 120s CMake (SIGTERM + 2s SIGKILL); stdout/stderr truncated to 1 MB. Commands — Python `python3 <f>`, Julia `julia <f>`, C++ `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <f> && ./a.out`, Lean one-off `lake env lean <f>`. No sandboxing (local personal tool).
+**Execution service** (`execution.ts`, single-file): own cwd per session; timeout 30s single-file / 120s CMake·dune·Cargo (SIGTERM + 2s SIGKILL); stdout/stderr truncated to 1 MB. Commands — Python `python3 <f>`, Julia `julia <f>`, C++ `g++ -O2 -std=c++20 -Wall -Wextra -o a.out <f> && ./a.out`, OCaml `ocaml <f>`, Rust `rustc -O -o a.out <f> && ./a.out`, Lean one-off `lake env lean <f>`. No sandboxing (local personal tool).
 
 ## Client Views
 
@@ -159,7 +183,7 @@ Routes: `/` Dashboard (active sessions, activity, heatmap), `/sessions` list (fi
 
 **SessionPage layouts** (resizable split-pane; CodeMirror 6 left):
 * **Lean** — left: Lean syntax + Unicode input (`\forall`→∀) + inline diagnostics + symbol palette. Right tabs: Goal State (KaTeX, updates on cursor; default), Messages (`#check`/`#eval`/`#print`), Claude, Notes (Markdown+LaTeX, 1500ms debounce), Links. Toolbar: Build, lake status, status; "Ask Claude" on error diagnostics.
-* **Freeform (Python/Julia/C++)** — right pane vertically split (tabs over terminal). Left: file-tab strip + optional `FileTree`; C++ gets full clangd, Python gets `@codemirror/lang-python`. Right tabs (C++ full set; others omit build/artifacts/outline/asm): Output, Build (`BuildPanel`), Artifacts (`ArtifactBrowser`), Outline (`OutlinePanel`), Asm (`CompilerExplorerPanel`), Claude, Notes, Links. Bottom: `TerminalPane` (xterm.js, multi-tab). Toolbar: Run (CMake-aware), language, status; "Ask Claude" on failed run.
+* **Freeform (Python/Julia/C++/OCaml/Rust)** — right pane vertically split (tabs over terminal). Left: file-tab strip + optional `FileTree`; C++ gets full clangd, OCaml ocamllsp, Rust rust-analyzer (`@codemirror/lang-rust`), Python `@codemirror/lang-python`. Right tabs (vary by language): Output, Build (`BuildPanel`), Artifacts (`ArtifactBrowser`), Outline (`OutlinePanel`), Asm (`CompilerExplorerPanel`, C++ only), Packages (`PackagesPanel`, Python uv / Rust cargo), Debug (`DebugPanel`, OCaml/Rust), Claude, Notes, Links. Bottom: `TerminalPane` (xterm.js, multi-tab). Toolbar: Run (CMake/dune/Cargo-aware) + Rust's Test/Clippy/Debug + clippy-on-save toggle, language, status; "Ask Claude" on failed build/run.
 * **Notebook** — left: `NotebookEditor` (code/markdown cells, per-cell run, text/HTML/image output, `FileTree`, completion via `useNotebookKernel`). Right tabs: Claude / Notes / Links only.
 
 ## Claude API Integration
@@ -186,11 +210,11 @@ Key in `settings.claude_api_key` (Settings modal), **read server-side only, neve
 
 ## Key Dependencies
 
-**Frontend:** React 18, React Router 6, Vite 6, TS 5; CodeMirror 6 (`codemirror`, `@codemirror/lang-cpp`, `@codemirror/lang-python`, `@codemirror/theme-one-dark`; Lean uses a hand-rolled language pack with Unicode input); xterm.js (`@xterm/xterm`, `@xterm/addon-fit`); KaTeX 0.16; Recharts, date-fns, uuid.
+**Frontend:** React 18, React Router 6, Vite 6, TS 5; CodeMirror 6 (`codemirror`, `@codemirror/lang-cpp`, `@codemirror/lang-python`, `@codemirror/lang-rust`, `@codemirror/theme-one-dark`; Lean uses a hand-rolled language pack with Unicode input; OCaml uses a hand-rolled stream language); xterm.js (`@xterm/xterm`, `@xterm/addon-fit`); KaTeX 0.16; Recharts, date-fns, uuid.
 
 **Backend:** Express 4, TS 5, better-sqlite3 11+, ws, cors, tsx (dev), `node-pty` (native, rebuilds on install), `multer`, `child_process`.
 
-**External tools (PATH):** `lean`+`lake` (via elan; Lean sessions), `clangd` (C++ LSP), `cmake` (+ `ninja` auto-preferred), `g++` (C++20; single-file + clangd query-driver), `python3`+`ipykernel` (notebooks/bridge), `julia` (optional), `git` (Lake/Mathlib).
+**External tools (PATH):** `lean`+`lake` (via elan; Lean sessions), `clangd` (C++ LSP), `cmake` (+ `ninja` auto-preferred), `g++` (C++20; single-file + clangd query-driver), `rustc`+`cargo` (Rust sessions; scaffold/build/test/dep-mgmt), `rust-analyzer` (Rust LSP), `cargo-clippy` (optional; Rust lints), `lldb-dap` (optional; Rust debug), `ocaml`+`dune`+`ocamllsp`+`ocamlearlybird` (OCaml), `python3`+`ipykernel`+`uv` (notebooks/bridge + Python envs), `julia` (optional), `git` (Lake/Mathlib).
 
 ## How-Tos
 
@@ -198,7 +222,7 @@ Key in `settings.claude_api_key` (Settings modal), **read server-side only, neve
 
 **New language server:** thin wrapper `server/src/services/<lang>-lsp.ts` (mirror `cpp-lsp.ts`) → `/ws/<lang>/:sessionId` upgrade handler in `index.ts` (validate then call) → wire its `forceStopAll()` into shutdown → client `useXxxLsp` hook (mirror `useCppLsp.ts`, JSON-RPC over WS, no LSP lib).
 
-**New freeform language** (overlaps "new session type"): add to `session_type` CHECK (+ migration) and the `SessionType`/`FREEFORM_SESSION_TYPES` unions in `session-types.ts` + `client/src/types.ts` → command map in `execution.ts` → CodeMirror mode in `CodeEditor` → New Session card + `LANGUAGE_FOR_TYPE` + `SessionListPage` filter + Badge color → runtime-availability check if it's a hard dep. `isFreeformType()` already gates terminal/LSP.
+**New freeform language** (overlaps "new session type"): add to `session_type` CHECK (+ migration) and the `SessionType`/`FREEFORM_SESSION_TYPES` unions in `session-types.ts` + `client/src/types.ts` → command map in `execution.ts` → CodeMirror mode in `CodeEditor` → New Session card + `LANGUAGE_FOR_TYPE` + `SessionListPage` filter + Badge color → backends entry in `backends.ts` if it's a hard dep. `isFreeformType()` already gates terminal/LSP. For a **full project-based** language (own build system + LSP + optional debugger), mirror **Rust** (`cargo-build.ts`/`cargo-env.ts`/`rust-project.ts`/`rust-lsp.ts`/`rust-dap.ts` + `/cargo/*` & `/cargo-env/*` routes + `cargoBuildService`/`cargoEnvService`/`useRustLsp` + `SessionPage` wiring) or **OCaml** (dune) end-to-end — both reuse the shared `builds`/`build_diagnostics` tables, `BuildPanel`/`ArtifactBrowser`/`OutlinePanel`/`PackagesPanel`/`DebugPanel`, and the generic `DapBridge`.
 
 **New API endpoint:** route file in `routes/` → register in `index.ts` → tables/migration in `db.ts` if needed.
 

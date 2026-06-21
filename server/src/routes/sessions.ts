@@ -11,6 +11,9 @@ import { cppProject } from '../services/cpp-project.js';
 import { ocamlLsp } from '../services/ocaml-lsp.js';
 import { ocamlProject } from '../services/ocaml-project.js';
 import { ocamlDap } from '../services/ocaml-dap.js';
+import { rustLsp } from '../services/rust-lsp.js';
+import { rustProject } from '../services/rust-project.js';
+import { rustDap } from '../services/rust-dap.js';
 import { symlinkPath } from '../services/bc-fixup.js';
 import { notebookKernel } from '../services/notebook-kernel.js';
 import { pythonEnv } from '../services/python-env.js';
@@ -149,10 +152,18 @@ router.post('/', async (req: Request, res: Response) => {
       VALUES (?, ?, ?, ?, ?, 'active', ?, '', ?, ?, ?)
     `).run(id, title, session_type, language, JSON.stringify(tags), JSON.stringify(links), workingDir, now, now);
 
+    // Rust: scaffold a Cargo package up front (fast, offline) so the primary
+    // file is the real src/main.rs cargo creates and rust-analyzer has a
+    // manifest to anchor to. Done before the file row so src/main.rs exists.
+    const isRust = session_type === 'rust';
+    if (isRust) {
+      rustProject.ensureCargoProject(absWorkingDir, title);
+    }
+
     // Create default file based on session type / language
     const isNotebook = session_type === 'notebook';
-    const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : language === 'ocaml' ? 'ml' : 'py';
-    const defaultFilename = isLean ? 'Main.lean' : isNotebook ? 'notebook.ipynb' : `main.${ext}`;
+    const ext = language === 'cpp' ? 'cpp' : language === 'julia' ? 'jl' : language === 'lean' ? 'lean' : language === 'ocaml' ? 'ml' : language === 'rust' ? 'rs' : 'py';
+    const defaultFilename = isLean ? 'Main.lean' : isNotebook ? 'notebook.ipynb' : isRust ? 'src/main.rs' : `main.${ext}`;
     const fileId = uuidv4();
     const fileType = isNotebook ? 'source' : 'source';
     const fileLanguage = isNotebook ? 'python' : language;
@@ -175,7 +186,8 @@ router.post('/', async (req: Request, res: Response) => {
         nbformat_minor: 5,
       };
       fs.writeFileSync(path.join(absWorkingDir, defaultFilename), JSON.stringify(emptyNb, null, 1));
-    } else if (!isLean) {
+    } else if (!isLean && !isRust) {
+      // Rust's src/main.rs is created by `cargo init` above — don't clobber it.
       fs.writeFileSync(path.join(absWorkingDir, defaultFilename), '');
     }
 
@@ -350,6 +362,8 @@ router.delete('/:id', (req: Request, res: Response) => {
       cppLsp.stopLsp(req.params.id as string);
       ocamlLsp.stopLsp(req.params.id as string);
       ocamlDap.stop(req.params.id as string);
+      rustLsp.stopLsp(req.params.id as string);
+      rustDap.stop(req.params.id as string);
       // Remove the per-session bytecode-debug symlink in /tmp (created by
       // bc-fixup post-build for OCaml debug). Safe to call for non-OCaml
       // sessions — it just no-ops if the symlink isn't present.

@@ -39,6 +39,12 @@ function getCommand(filename: string, language: string): { cmd: string; args: st
     }
     case 'ocaml':
       return { cmd: 'ocaml', args: [filename], shell: false };
+    case 'rust': {
+      const q = shellQuote(filename);
+      // Single-file fallback (no Cargo.toml). `exec ./a.out` so the shell is
+      // replaced by the program for accurate /proc RSS sampling, same as cpp.
+      return { cmd: 'sh', args: ['-c', `rustc -O -o a.out ${q} && exec ./a.out`], shell: false };
+    }
     case 'lean':
       return { cmd: 'lake', args: ['env', 'lean', filename], shell: false };
     default:
@@ -52,6 +58,7 @@ function getCommandString(filename: string, language: string): string {
     case 'julia': return `julia ${filename}`;
     case 'cpp': return `g++ -O2 -std=c++20 -Wall -Wextra -o a.out ${filename} && ./a.out`;
     case 'ocaml': return `ocaml ${filename}`;
+    case 'rust': return `rustc -O -o a.out ${filename} && ./a.out`;
     case 'lean': return `lake env lean ${filename}`;
     default: return `python3 ${filename}`;
   }
