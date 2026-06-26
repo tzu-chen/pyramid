@@ -1,7 +1,8 @@
 export type KeybindingAction =
   | 'toggleFullscreen'
   | 'toggleSidebar'
-  | 'togglePanel';
+  | 'togglePanel'
+  | 'toggleFileTree';
 
 export interface KeybindingMeta {
   action: KeybindingAction;
@@ -14,6 +15,7 @@ export const KEYBINDING_META: KeybindingMeta[] = [
   { action: 'toggleFullscreen', label: 'Toggle fullscreen mode', scope: 'Global', defaultKey: 'f' },
   { action: 'toggleSidebar', label: 'Toggle sidebar', scope: 'Global', defaultKey: 'b' },
   { action: 'togglePanel', label: 'Toggle session side panel', scope: 'Session', defaultKey: 'p' },
+  { action: 'toggleFileTree', label: 'Toggle directory panel', scope: 'Session', defaultKey: 'd' },
 ];
 
 export type KeybindingsConfig = Record<KeybindingAction, string>;

@@ -141,6 +141,24 @@
   color: white;
 }
 
+.layoutToggleButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.layoutToggleButton:hover {
+  background-color: var(--color-surface-hover, var(--color-bg));
+  color: var(--color-text);
+}
+
 .suspendBanner {
   padding: var(--space-2) var(--space-4);
   background-color: var(--color-warning-bg, rgba(217, 119, 6, 0.08));
@@ -157,6 +175,16 @@
   display: flex;
   flex: 1;
   overflow: hidden;
+}
+
+/* Panel-on-bottom layout: editor stacks above the side panel. */
+.workbenchVertical {
+  flex-direction: column;
+}
+
+.workbenchVertical .editorPane,
+.workbenchVertical .rightPane {
+  min-height: 0;
 }
 
 .editorPane {
@@ -249,6 +277,15 @@
   opacity: 0.3;
 }
 
+/* Horizontal variant used when the panel is below the editor. */
+.dividerHorizontal {
+  width: auto;
+  height: 5px;
+  cursor: row-resize;
+  border-left: none;
+  border-top: 1px solid var(--color-border);
+}
+
 /* Right pane */
 .rightPane {
   flex-grow: 0;
@@ -294,6 +331,17 @@
 .panelExpandBtn:hover {
   color: var(--color-text);
   background: var(--color-bg-tertiary);
+}
+
+/* When the panel sits at the bottom, the expand rail becomes a thin
+   full-width strip along the top of the collapsed area. */
+.panelExpandBtnHorizontal {
+  width: auto;
+  height: 22px;
+  padding-top: 0;
+  border-left: none;
+  border-top: 1px solid var(--color-border);
+  align-items: center;
 }
 
 .rightPaneTop {

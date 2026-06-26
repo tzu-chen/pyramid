@@ -112,6 +112,24 @@ export function ChevronLeftIcon({ size = 16, ...props }: IconProps) {
   );
 }
 
+export function PanelRightIcon({ size = 16, ...props }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...defaultProps} {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="15" y1="4" x2="15" y2="20" />
+    </svg>
+  );
+}
+
+export function PanelBottomIcon({ size = 16, ...props }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...defaultProps} {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="3" y1="14" x2="21" y2="14" />
+    </svg>
+  );
+}
+
 export function SettingsIcon({ size = 16, ...props }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...defaultProps} {...props}>

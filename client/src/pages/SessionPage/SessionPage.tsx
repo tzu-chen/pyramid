@@ -36,7 +36,7 @@ import ArtifactBrowser from '../../components/ArtifactBrowser/ArtifactBrowser';
 import CompilerExplorerPanel from '../../components/CompilerExplorerPanel/CompilerExplorerPanel';
 import DebugPanel from '../../components/DebugPanel/DebugPanel';
 import ReferencePanel, { getReferenceSources } from '../../components/ReferencePanel/ReferencePanel';
-import { ChevronLeftIcon, ChevronRightIcon } from '../../components/Icons/Icons';
+import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, PanelRightIcon, PanelBottomIcon } from '../../components/Icons/Icons';
 import { useKeyboardShortcut } from '../../hooks/useKeyboardShortcut';
 import { api } from '../../services/api';
 import type { EditorSelection } from '../../components/CodeEditor/CodeEditor';
@@ -81,6 +81,8 @@ const CARGO_PROFILE_KEY = 'pyramid_cargo_profile';
 const CARGO_TARGET_KEY = 'pyramid_cargo_target';
 const CARGO_CLIPPY_KEY = 'pyramid_cargo_clippy';
 const PANEL_COLLAPSED_KEY = 'pyramid_panel_collapsed';
+const PANEL_POSITION_KEY = 'pyramid_panel_position';
+const FILE_TREE_COLLAPSED_KEY = 'pyramid_filetree_collapsed';
 
 // Files clangd should syntax-check. Anything else (CMakeLists.txt, *.txt,
 // *.md, ...) must not be opened in clangd or surface clangd diagnostics, even
@@ -128,15 +130,37 @@ function SessionPage() {
   const { fontSize } = useEditorFontSize();
   const insertRef = useRef<((text: string) => void) | null>(null);
 
-  // Notebook file tree collapse state
-  const [notebookTreeCollapsed, setNotebookTreeCollapsed] = useState(false);
+  // Directory (file tree) panel collapse state — shared by notebook and
+  // freeform layouts, persisted, and toggled with the `d` shortcut.
+  const [fileTreeCollapsed, setFileTreeCollapsed] = useState<boolean>(
+    () => localStorage.getItem(FILE_TREE_COLLAPSED_KEY) === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem(FILE_TREE_COLLAPSED_KEY, fileTreeCollapsed ? '1' : '0');
+  }, [fileTreeCollapsed]);
+  useKeyboardShortcut('toggleFileTree', useCallback(() => setFileTreeCollapsed(c => !c), []));
 
-  // Resizable split pane
+  // Where the side panel (tabs + terminal) sits relative to the editor:
+  // 'right' (default) puts it beside the editor, 'bottom' stacks it underneath.
+  // Persisted so the choice sticks across reloads.
+  const [panelPosition, setPanelPosition] = useState<'right' | 'bottom'>(
+    () => (localStorage.getItem(PANEL_POSITION_KEY) === 'bottom' ? 'bottom' : 'right'),
+  );
+  useEffect(() => {
+    localStorage.setItem(PANEL_POSITION_KEY, panelPosition);
+  }, [panelPosition]);
+  const isBottomPanel = panelPosition === 'bottom';
+
+  // Resizable split pane. The main editor/panel divide flips axis with the
+  // panel position: horizontal drag when the panel is on the right, vertical
+  // when it's on the bottom. The ratio (fraction given to the editor) carries
+  // over between orientations.
   const { ratio, onDragStart, containerRef } = useResizablePanel({
     storageKey: 'pyramid_panel_ratio',
     defaultRatio: 0.6,
     minRatio: 0.25,
     maxRatio: 0.8,
+    axis: isBottomPanel ? 'y' : 'x',
   });
 
   // Hide/show the right side panel (tabs + terminal). Persisted so it sticks
@@ -1608,6 +1632,14 @@ function SessionPage() {
         </div>
         <div className={styles.toolbarRight}>
           <button
+            className={styles.layoutToggleButton}
+            onClick={() => setPanelPosition(p => (p === 'right' ? 'bottom' : 'right'))}
+            title={isBottomPanel ? 'Move panel to the right of the editor' : 'Move panel below the editor'}
+            aria-label="Toggle panel position"
+          >
+            {isBottomPanel ? <PanelRightIcon size={16} /> : <PanelBottomIcon size={16} />}
+          </button>
+          <button
             className={`${styles.suspendButton} ${suspended ? styles.suspendButtonActive : ''}`}
             onClick={() => setSuspended(s => !s)}
             title={
@@ -1816,20 +1848,20 @@ function SessionPage() {
         </div>
       )}
 
-      <div className={styles.workbench} ref={containerRef}>
+      <div className={`${styles.workbench} ${isBottomPanel ? styles.workbenchVertical : ''}`} ref={containerRef}>
         <div
           className={styles.editorPane}
           style={panelCollapsed ? { flex: 1 } : { flexBasis: `${ratio * 100}%` }}
         >
           {isNotebook ? (
             <div className={styles.editorWithTree}>
-              {!notebookTreeCollapsed && (
+              {!fileTreeCollapsed && (
                 <div className={styles.fileTreePanel}>
                   <div className={styles.fileTreeHeader}>
                     <button
                       className={styles.fileTreeToggle}
-                      onClick={() => setNotebookTreeCollapsed(true)}
-                      title="Collapse file browser"
+                      onClick={() => setFileTreeCollapsed(true)}
+                      title="Collapse file browser (d)"
                     >
                       ‹
                     </button>
@@ -1844,11 +1876,11 @@ function SessionPage() {
                   />
                 </div>
               )}
-              {notebookTreeCollapsed && (
+              {fileTreeCollapsed && (
                 <button
                   className={styles.fileTreeExpandBtn}
-                  onClick={() => setNotebookTreeCollapsed(false)}
-                  title="Show file browser"
+                  onClick={() => setFileTreeCollapsed(false)}
+                  title="Show file browser (d)"
                 >
                   ›
                 </button>
@@ -1910,16 +1942,36 @@ function SessionPage() {
             </>
           ) : (
             <div className={styles.editorWithTree}>
-              <div className={styles.fileTreePanel}>
-                <FileTree
-                  sessionId={id!}
-                  files={session.files}
-                  activeFileId={activeFileId}
-                  onSelectFile={openFile}
-                  onFilesChanged={refresh}
-                  sessionLanguage={session.language}
-                />
-              </div>
+              {!fileTreeCollapsed && (
+                <div className={styles.fileTreePanel}>
+                  <div className={styles.fileTreeHeader}>
+                    <button
+                      className={styles.fileTreeToggle}
+                      onClick={() => setFileTreeCollapsed(true)}
+                      title="Collapse file browser (d)"
+                    >
+                      ‹
+                    </button>
+                  </div>
+                  <FileTree
+                    sessionId={id!}
+                    files={session.files}
+                    activeFileId={activeFileId}
+                    onSelectFile={openFile}
+                    onFilesChanged={refresh}
+                    sessionLanguage={session.language}
+                  />
+                </div>
+              )}
+              {fileTreeCollapsed && (
+                <button
+                  className={styles.fileTreeExpandBtn}
+                  onClick={() => setFileTreeCollapsed(false)}
+                  title="Show file browser (d)"
+                >
+                  ›
+                </button>
+              )}
               <div className={styles.editorContainer}>
                 <FileTabs
                   files={session.files}
@@ -1978,17 +2030,19 @@ function SessionPage() {
 
         {panelCollapsed ? (
           <button
-            className={styles.panelExpandBtn}
+            className={`${styles.panelExpandBtn} ${isBottomPanel ? styles.panelExpandBtnHorizontal : ''}`}
             onClick={() => setPanelCollapsed(false)}
             title="Show panel (p)"
             aria-label="Show panel"
           >
-            <ChevronLeftIcon size={16} />
+            {isBottomPanel
+              ? <ChevronDownIcon size={16} style={{ transform: 'rotate(180deg)' }} />
+              : <ChevronLeftIcon size={16} />}
           </button>
         ) : (
         <>
         <div
-          className={styles.divider}
+          className={`${styles.divider} ${isBottomPanel ? styles.dividerHorizontal : ''}`}
           onMouseDown={onDragStart}
           onTouchStart={onDragStart}
         />
@@ -2147,7 +2201,7 @@ function SessionPage() {
               title="Hide panel (p)"
               aria-label="Hide panel"
             >
-              <ChevronRightIcon size={14} />
+              {isBottomPanel ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
             </button>
           </div>
 
