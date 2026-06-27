@@ -7,6 +7,7 @@ import { fileService } from '../../services/fileService';
 import { editorStorage } from '../../services/editorStorage';
 import { formatBytes } from '../../utils/format';
 import { parseMissingModule } from '../../utils/parseMissingModule';
+import { NotebookCellSnapshot } from '../../types';
 import styles from './NotebookEditor.module.css';
 
 type CellType = 'code' | 'markdown';
@@ -35,6 +36,36 @@ interface NotebookEditorProps {
   suspended?: boolean;
   // Install a package surfaced by a cell's ModuleNotFoundError (resolves when done).
   onInstallPackage?: (name: string) => Promise<void>;
+  // Receives a getter for the current (in-memory) cells so the Claude panel can
+  // build live, in-sync context. Set to a fresh getter on mount, cleared on unmount.
+  cellsProviderRef?: React.MutableRefObject<(() => NotebookCellSnapshot[]) | null>;
+  // Fires the current cell ids whenever the cell structure changes (load, add,
+  // remove, reorder) — low frequency, so the Claude cell-picker can re-sync
+  // without subscribing to every keystroke/output.
+  onCellIdsChange?: (ids: string[]) => void;
+}
+
+// Render a cell's outputs as compact text for Claude context. Images are noted
+// rather than embedded (base64 blobs would blow the token budget), and ANSI
+// escapes are stripped from tracebacks.
+function outputsToText(outputs: CellOutput[]): string {
+  const parts: string[] = [];
+  for (const out of outputs) {
+    if (out.output_type === 'stream') {
+      parts.push(out.text || '');
+    } else if (out.output_type === 'error') {
+      const tb = (out.traceback || []).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+      parts.push(tb || `${out.ename || 'Error'}: ${out.evalue || ''}`);
+    } else if (out.output_type === 'execute_result' || out.output_type === 'display_data') {
+      const data = out.data || {};
+      if (data['text/plain']) parts.push(data['text/plain']);
+      else if (data['image/png'] || data['image/jpeg']) parts.push('[image output]');
+      else if (data['image/svg+xml']) parts.push('[svg image output]');
+      else if (data['text/html']) parts.push('[html output]');
+      else parts.push('[rich output]');
+    }
+  }
+  return parts.join('\n').trim();
 }
 
 function newId(): string {
@@ -169,7 +200,7 @@ function getHeadingLevel(cell: NotebookCell): number {
 }
 
 
-function NotebookEditor({ sessionId, fileId, fontSize, suspended = false, onInstallPackage }: NotebookEditorProps) {
+function NotebookEditor({ sessionId, fileId, fontSize, suspended = false, onInstallPackage, cellsProviderRef, onCellIdsChange }: NotebookEditorProps) {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loadedFileId, setLoadedFileId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
@@ -228,6 +259,32 @@ function NotebookEditor({ sessionId, fileId, fontSize, suspended = false, onInst
     lastSavedRef.current = debouncedSerialized;
     fileService.updateContent(sessionId, fileId, debouncedSerialized).catch(() => {});
   }, [debouncedSerialized, sessionId, fileId, loadedFileId, notebook]);
+
+  // Expose a getter for the current in-memory cells so the Claude panel can
+  // pull live context (the on-disk .ipynb lags by the autosave debounce).
+  // Reads notebookDataRef so the getter is stable yet always returns fresh data.
+  useEffect(() => {
+    if (!cellsProviderRef) return;
+    cellsProviderRef.current = () => {
+      const nb = notebookDataRef.current;
+      if (!nb) return [];
+      return nb.cells.map(c => ({
+        id: c.id,
+        cell_type: c.cell_type,
+        source: c.source,
+        execution_count: c.execution_count,
+        outputText: c.cell_type === 'code' ? outputsToText(c.outputs) : '',
+      }));
+    };
+    return () => { cellsProviderRef.current = null; };
+  }, [cellsProviderRef]);
+
+  // Notify on cell-structure changes (joined ids only — fires on load/add/
+  // remove/reorder, not on every keystroke). Lets the Claude cell-picker re-sync.
+  const cellIdSignature = notebook ? notebook.cells.map(c => c.id).join('\n') : '';
+  useEffect(() => {
+    onCellIdsChange?.(cellIdSignature ? cellIdSignature.split('\n') : []);
+  }, [cellIdSignature, onCellIdsChange]);
 
   // Handle kernel events — append outputs to the right cell
   const handleCellEvent = useCallback((cellId: string, event: { type: string; [key: string]: unknown }) => {

@@ -9,7 +9,8 @@ import {
 } from '../../services/claudeService';
 import { LspDiagnostic } from '../CodeEditor/CodeEditor';
 import MarkdownRenderer from '../MarkdownRenderer/MarkdownRenderer';
-import { SessionLink } from '../../types';
+import { fileService } from '../../services/fileService';
+import { SessionLink, SessionFile, NotebookCellSnapshot } from '../../types';
 import styles from './ClaudePanel.module.css';
 
 type BlockSource = 'auto-file' | 'auto-diagnostics' | 'auto-goal' | 'auto-run' | 'scribe' | 'custom';
@@ -21,6 +22,31 @@ interface PanelContextBlock extends ContextBlock {
 
 function isAutoSource(s: BlockSource): boolean {
   return s === 'auto-file' || s === 'auto-diagnostics' || s === 'auto-goal' || s === 'auto-run';
+}
+
+// First non-empty line of a cell's source, truncated — used in the cell picker.
+function cellPreview(source: string): string {
+  const line = source.split('\n').map(l => l.trim()).find(l => l.length > 0) || '';
+  return line.length > 60 ? line.slice(0, 60) + '…' : (line || '(empty)');
+}
+
+// Render selected notebook cells as readable text context. `all` supplies the
+// 1-based cell numbers so positions stay meaningful even with a partial pick.
+function formatNotebookCells(chosen: NotebookCellSnapshot[], all: NotebookCellSnapshot[]): string {
+  const numberById = new Map(all.map((c, i) => [c.id, i + 1]));
+  return chosen
+    .map(c => {
+      const n = numberById.get(c.id);
+      const head = c.cell_type === 'code'
+        ? `[Cell ${n} · code${c.execution_count != null ? ` · In[${c.execution_count}]` : ''}]`
+        : `[Cell ${n} · markdown]`;
+      let body = `${head}\n${c.source.trim() ? c.source : '(empty)'}`;
+      if (c.cell_type === 'code' && c.outputText) {
+        body += `\n--- output ---\n${c.outputText}`;
+      }
+      return body;
+    })
+    .join('\n\n');
 }
 
 interface ClaudePanelProps {
@@ -36,6 +62,15 @@ interface ClaudePanelProps {
   lastRun?: { exit_code: number | null; stdout: string; stderr: string } | null;
   /** Session cross-app links */
   links?: SessionLink[];
+  /** All files in the session, for the "+ From files" context picker */
+  projectFiles?: SessionFile[];
+  /** Notebook sessions: live getter for the open notebook's in-memory cells.
+   *  When set, the current-file context is built from (selectable) cells and
+   *  stays in sync with on-screen edits instead of the stale .ipynb on disk. */
+  getNotebookCells?: () => NotebookCellSnapshot[];
+  /** Changes whenever the notebook's cell structure changes (load/add/remove/
+   *  reorder); used to re-sync the cell-picker display. */
+  notebookCellsVersion?: string;
   /** Called when user clicks "Apply to editor" on a code block */
   onApplyCode?: (code: string) => void;
   /** If true, auto-activate error diagnosis mode */
@@ -53,6 +88,9 @@ function ClaudePanel({
   goalState,
   lastRun,
   links,
+  projectFiles,
+  getNotebookCells,
+  notebookCellsVersion,
   onApplyCode,
   autoErrorMode,
   promptFocusRef,
@@ -67,6 +105,16 @@ function ClaudePanel({
   const [scribeSearch, setScribeSearch] = useState('');
   const [scribeResults, setScribeResults] = useState<ScribeNode[]>([]);
   const [scribeSearching, setScribeSearching] = useState(false);
+  const [addingFile, setAddingFile] = useState(false);
+  // Notebook cell selection (notebook sessions only). cellList is a snapshot for
+  // the picker UI; the content actually sent is re-pulled fresh from
+  // getNotebookCells() at build/send time so it reflects the latest edits.
+  // Selection is tracked as the *deselected* ids so the default (empty set) means
+  // "all cells", which stays correct even before the picker is first opened and
+  // for cells added after.
+  const [cellList, setCellList] = useState<NotebookCellSnapshot[]>([]);
+  const [deselectedCellIds, setDeselectedCellIds] = useState<Set<string>>(new Set());
+  const [showCellPicker, setShowCellPicker] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
@@ -91,13 +139,49 @@ function ClaudePanel({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [history.length, loading]);
 
+  // Re-snapshot the notebook's cells into the picker (display only — selection
+  // lives in deselectedCellIds). Called on mount, on structural changes (via
+  // notebookCellsVersion), when the picker is opened, and via the Refresh button.
+  const refreshCells = useCallback(() => {
+    if (getNotebookCells) setCellList(getNotebookCells());
+  }, [getNotebookCells]);
+
+  // Snapshot on mount and whenever the notebook's cell structure changes (load,
+  // add/remove/reorder) so the picker reflects the current cells.
+  useEffect(() => { refreshCells(); }, [refreshCells, notebookCellsVersion]);
+
+  const toggleCellPicker = () => {
+    if (!showCellPicker) refreshCells();
+    setShowCellPicker(v => !v);
+  };
+  const toggleCell = (cellId: string) => {
+    setDeselectedCellIds(prev => {
+      const next = new Set(prev);
+      if (next.has(cellId)) next.delete(cellId); else next.add(cellId);
+      return next;
+    });
+  };
+  const selectAllCells = () => setDeselectedCellIds(new Set());
+  const selectNoCells = () => setDeselectedCellIds(new Set(cellList.map(c => c.id)));
+  const selectedCellCount = cellList.filter(c => !deselectedCellIds.has(c.id)).length;
+
   // Derive the auto-managed context blocks from current panel data. Called
   // both from the sync effect below and at send time so the outgoing payload
   // always carries the freshest file content / diagnostics / goal / last run.
   const buildAutoBlocks = useCallback((): PanelContextBlock[] => {
     const blocks: PanelContextBlock[] = [];
 
-    if (fileContent) {
+    if (getNotebookCells) {
+      // Notebook: build from the live cells, minus any the user deselected.
+      const cells = getNotebookCells();
+      const chosen = cells.filter(c => !deselectedCellIds.has(c.id));
+      if (chosen.length > 0) {
+        const label = chosen.length === cells.length
+          ? `Notebook: ${fileName} (all ${cells.length} cells)`
+          : `Notebook: ${fileName} (${chosen.length}/${cells.length} cells)`;
+        blocks.push({ label, content: formatNotebookCells(chosen, cells), source: 'auto-file' });
+      }
+    } else if (fileContent) {
       blocks.push({ label: `Current file: ${fileName}`, content: fileContent, source: 'auto-file' });
     }
 
@@ -122,7 +206,7 @@ function ClaudePanel({
     }
 
     return blocks;
-  }, [fileContent, fileName, sessionType, diagnostics, goalState, lastRun]);
+  }, [fileContent, fileName, sessionType, diagnostics, goalState, lastRun, getNotebookCells, deselectedCellIds]);
 
   // Refresh auto blocks whenever their underlying data changes; preserve
   // user-added Scribe/custom blocks across edits.
@@ -195,6 +279,22 @@ function ClaudePanel({
 
   const handleAddFreeText = () => {
     setContextBlocks(prev => [...prev, { label: 'Additional context', content: '', source: 'custom', editing: true }]);
+  };
+
+  const handleAddProjectFile = async (file: SessionFile) => {
+    setAddingFile(false);
+    const label = `File: ${file.filename}`;
+    if (contextBlocks.some(b => b.label === label)) return;
+    try {
+      const content = await fileService.getContent(sessionId, file.id);
+      setContextBlocks(prev =>
+        prev.some(b => b.label === label)
+          ? prev
+          : [...prev, { label, content, source: 'custom' }]
+      );
+    } catch (err) {
+      setError(`Couldn't load ${file.filename}: ${(err as Error).message}`);
+    }
   };
 
   const handleScribeSearch = async () => {
@@ -316,6 +416,43 @@ function ClaudePanel({
             </button>
           )}
         </div>
+
+        {/* Notebook cell picker — choose which cells go into the context */}
+        {getNotebookCells && (
+          <div className={styles.cellPicker}>
+            <div className={styles.cellPickerHeader}>
+              <button className={styles.cellPickerToggle} onClick={toggleCellPicker}>
+                <span className={styles.cellPickerChevron}>{showCellPicker ? '▾' : '▸'}</span>
+                Notebook cells ({selectedCellCount}/{cellList.length})
+              </button>
+              {showCellPicker && (
+                <div className={styles.cellPickerActions}>
+                  <button className={styles.contextBtn} onClick={selectAllCells}>All</button>
+                  <button className={styles.contextBtn} onClick={selectNoCells}>None</button>
+                  <button className={styles.contextBtn} onClick={refreshCells} title="Re-sync with the notebook">↻</button>
+                </div>
+              )}
+            </div>
+            {showCellPicker && (
+              <div className={styles.cellPickerList}>
+                {cellList.length === 0 && <div className={styles.cellPickerEmpty}>No cells.</div>}
+                {cellList.map((c, i) => (
+                  <label key={c.id} className={styles.cellPickerItem}>
+                    <input
+                      type="checkbox"
+                      checked={!deselectedCellIds.has(c.id)}
+                      onChange={() => toggleCell(c.id)}
+                    />
+                    <span className={styles.cellPickerNum}>{i + 1}</span>
+                    <span className={styles.cellPickerType}>{c.cell_type === 'code' ? 'code' : 'md'}</span>
+                    <span className={styles.cellPickerText}>{cellPreview(c.source)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {contextBlocks.map((block, i) => (
           <div key={i} className={styles.contextBlock}>
             <div className={styles.contextHeader}>
@@ -343,8 +480,27 @@ function ClaudePanel({
         ))}
         <div className={styles.addContextRow}>
           <button className={styles.addContextBtn} onClick={handleAddFreeText}>+ Add context</button>
-          <button className={styles.addContextBtn} onClick={() => setAddingScribe(!addingScribe)}>+ From Scribe</button>
+          {projectFiles && projectFiles.length > 0 && (
+            <button className={styles.addContextBtn} onClick={() => { setAddingFile(!addingFile); setAddingScribe(false); }}>+ From files</button>
+          )}
+          <button className={styles.addContextBtn} onClick={() => { setAddingScribe(!addingScribe); setAddingFile(false); }}>+ From Scribe</button>
         </div>
+
+        {addingFile && projectFiles && (
+          <div className={styles.filePicker}>
+            {projectFiles.length === 0 && <div className={styles.cellPickerEmpty}>No files.</div>}
+            {projectFiles.map(file => (
+              <button
+                key={file.id}
+                className={styles.filePickerItem}
+                onClick={() => handleAddProjectFile(file)}
+                title={`Add ${file.filename} to context`}
+              >
+                {file.filename}
+              </button>
+            ))}
+          </div>
+        )}
 
         {addingScribe && (
           <div className={styles.scribePicker}>

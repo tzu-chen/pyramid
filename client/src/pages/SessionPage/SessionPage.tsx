@@ -66,7 +66,7 @@ import { juliaEnvService } from '../../services/juliaEnvService';
 import { useEditorFontSize } from '../../contexts/EditorFontSizeContext';
 import { editorStorage } from '../../services/editorStorage';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { ExecutionRun, SessionLink, LakeStatus, VenvStatus, LinkApp, RefType, isFreeformType } from '../../types';
+import { ExecutionRun, SessionLink, LakeStatus, VenvStatus, LinkApp, RefType, NotebookCellSnapshot, isFreeformType } from '../../types';
 import { formatBytes } from '../../utils/format';
 import styles from './SessionPage.module.css';
 
@@ -333,6 +333,15 @@ function SessionPage() {
   const prevNotesRef = useRef('');
   const fileUriRef = useRef<string | null>(null);
   const lspOpenedFileRef = useRef<string | null>(null);
+  // Live getter for the open notebook's in-memory cells (set by NotebookEditor),
+  // so the Claude panel builds context in sync with on-screen edits. The stable
+  // callback wrapper keeps ClaudePanel's effects from re-firing every render.
+  const notebookCellsProviderRef = useRef<(() => NotebookCellSnapshot[]) | null>(null);
+  const getNotebookCells = useCallback(() => notebookCellsProviderRef.current?.() ?? [], []);
+  // Bumps whenever the open notebook's cell structure changes, so ClaudePanel's
+  // cell picker re-syncs (the getter is read-on-demand, not reactive).
+  const [notebookCellsVersion, setNotebookCellsVersion] = useState('');
+  const handleNotebookCellIds = useCallback((ids: string[]) => setNotebookCellsVersion(ids.join('\n')), []);
 
   // Compute file URI for LSP
   const getFileUri = useCallback((filename: string) => {
@@ -1897,7 +1906,7 @@ function SessionPage() {
                   {!activeFileId ? (
                     <WelcomeScreen files={session.files} onOpenFile={openFile} />
                   ) : activeFileExt === 'ipynb' ? (
-                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} onInstallPackage={handleInstallMissing} />
+                    <NotebookEditor sessionId={id!} fileId={activeFileId} fontSize={fontSize} suspended={suspended} onInstallPackage={handleInstallMissing} cellsProviderRef={notebookCellsProviderRef} onCellIdsChange={handleNotebookCellIds} />
                   ) : activeFileExt === 'csv' ? (
                     <CsvViewer sessionId={id!} fileId={activeFileId} />
                   ) : (
@@ -2661,6 +2670,9 @@ function SessionPage() {
                 goalState={isLean ? lsp.goalState : undefined}
                 lastRun={!isLean ? latestRun : undefined}
                 links={session.links}
+                projectFiles={session.files}
+                getNotebookCells={isNotebook && activeFileExt === 'ipynb' ? getNotebookCells : undefined}
+                notebookCellsVersion={notebookCellsVersion}
                 onApplyCode={handleApplyCode}
                 autoErrorMode={autoErrorMode}
                 promptFocusRef={claudePromptFocusRef}

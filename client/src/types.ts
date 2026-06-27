@@ -48,6 +48,20 @@ export interface SessionFile {
   updated_at: string;
 }
 
+/**
+ * A live snapshot of one notebook cell, surfaced from NotebookEditor so the
+ * Claude panel can build context from the in-memory notebook (which lags disk
+ * by the autosave debounce) instead of the stale .ipynb loaded on open.
+ */
+export interface NotebookCellSnapshot {
+  id: string;
+  cell_type: 'code' | 'markdown';
+  source: string;
+  execution_count: number | null;
+  /** Compact text rendering of the cell's outputs (images are noted, not embedded). */
+  outputText: string;
+}
+
 export interface ExecutionRun {
   id: string;
   session_id: string;

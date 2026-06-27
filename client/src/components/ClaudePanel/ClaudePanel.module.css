@@ -263,6 +263,127 @@
   color: var(--color-text-tertiary);
 }
 
+/* Notebook cell picker */
+.cellPicker {
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.cellPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-bg-secondary);
+}
+
+.cellPickerToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.cellPickerChevron {
+  color: var(--color-text-tertiary);
+  font-size: 0.7em;
+}
+
+.cellPickerActions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.cellPickerList {
+  display: flex;
+  flex-direction: column;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.cellPickerEmpty {
+  padding: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.cellPickerItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.cellPickerItem:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.cellPickerNum {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  min-width: 1.5em;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.cellPickerType {
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  min-width: 2.5em;
+  flex-shrink: 0;
+}
+
+.cellPickerText {
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Project file picker */
+.filePicker {
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.filePickerItem {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filePickerItem:last-child {
+  border-bottom: none;
+}
+
+.filePickerItem:hover {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
 /* Mode selector */
 .modeRow {
   padding: var(--space-2) var(--space-3);
