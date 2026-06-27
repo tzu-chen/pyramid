@@ -38,6 +38,7 @@ import { isFreeformType } from './session-types.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3007', 10);
+const HOST = process.env.HOST || '127.0.0.1';
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -70,8 +71,8 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`Pyramid server running on port ${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Pyramid server running on ${HOST}:${PORT}`);
 });
 
 // WebSocket server for Lean LSP
