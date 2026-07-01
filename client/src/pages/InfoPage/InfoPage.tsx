@@ -1,12 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import {
   BackendsResponse,
   BackendInfo,
   BackendCategory,
-  RunningSessionsResponse,
-  RunningSessionInfo,
-  RunningServiceInfo,
 } from '../../types';
 import { backendsService } from '../../services/backendsService';
 import { RefreshIcon } from '../../components/Icons/Icons';
@@ -66,71 +62,16 @@ function BackendCard({ backend }: { backend: BackendInfo }) {
   );
 }
 
-function formatUptime(startedAt: number): string {
-  const ms = Date.now() - startedAt;
-  if (ms < 0) return '0s';
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ${sec % 60}s`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h ${min % 60}m`;
-}
-
-const KIND_LABELS: Record<RunningServiceInfo['kind'], string> = {
-  lsp: 'LSP',
-  kernel: 'Kernel',
-  dap: 'Debug',
-  terminal: 'Terminal',
-};
-
-function ServiceRow({ svc }: { svc: RunningServiceInfo }) {
-  return (
-    <li className={styles.serviceRow}>
-      <span className={`${styles.serviceKind} ${styles[`kind_${svc.kind}`]}`}>{KIND_LABELS[svc.kind]}</span>
-      <span className={styles.serviceName}>{svc.name}</span>
-      <code className={styles.serviceCommand}>{svc.command}</code>
-      <span className={styles.serviceMeta}>
-        {svc.pid !== null && <span>pid {svc.pid}</span>}
-        <span>up {formatUptime(svc.started_at)}</span>
-        {svc.client_count !== undefined && <span>{svc.client_count} client{svc.client_count === 1 ? '' : 's'}</span>}
-        {svc.kind === 'kernel' && svc.ready === false && <span className={styles.notReady}>starting</span>}
-        {svc.kind === 'terminal' && svc.cols !== undefined && <span>{svc.cols}×{svc.rows}</span>}
-      </span>
-    </li>
-  );
-}
-
-function RunningSessionCard({ session }: { session: RunningSessionInfo }) {
-  const title = session.title ?? `(unknown session ${session.session_id.slice(0, 8)})`;
-  return (
-    <div className={styles.runningCard}>
-      <div className={styles.runningHeader}>
-        <div className={styles.runningTitleRow}>
-          <Link to={`/sessions/${session.session_id}`} className={styles.runningTitle}>{title}</Link>
-          {session.session_type && <span className={styles.runningBadge}>{session.session_type}</span>}
-          {session.language && <span className={styles.runningBadgeMuted}>{session.language}</span>}
-        </div>
-        <code className={styles.runningId}>{session.session_id.slice(0, 8)}</code>
-      </div>
-      <ul className={styles.serviceList}>
-        {session.services.map((s, i) => <ServiceRow key={i} svc={s} />)}
-      </ul>
-    </div>
-  );
-}
-
 function InfoPage() {
   const [data, setData] = useState<BackendsResponse | null>(null);
-  const [running, setRunning] = useState<RunningSessionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    Promise.all([backendsService.list(), backendsService.listRunning()])
-      .then(([b, r]) => { setData(b); setRunning(r); })
+    backendsService.list()
+      .then(setData)
       .catch(err => setError(err.message || 'Failed to fetch backends'))
       .finally(() => setLoading(false));
   }, []);
@@ -185,24 +126,6 @@ function InfoPage() {
       )}
 
       {loading && !data && <div className={styles.loading}>Probing installed backends…</div>}
-
-      {running && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>
-            Running Sessions
-            <span className={styles.sectionCount}>
-              {running.session_count} session{running.session_count === 1 ? '' : 's'} · {running.service_count} service{running.service_count === 1 ? '' : 's'}
-            </span>
-          </h2>
-          {running.sessions.length === 0 ? (
-            <div className={styles.emptyRunning}>No active LSP servers, kernels, debuggers, or terminals.</div>
-          ) : (
-            <div className={styles.runningList}>
-              {running.sessions.map(s => <RunningSessionCard key={s.session_id} session={s} />)}
-            </div>
-          )}
-        </section>
-      )}
 
       {data && CATEGORY_ORDER.map(cat => {
         const items = grouped[cat];

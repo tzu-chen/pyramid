@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useSessions } from '../../hooks/useSessions';
 import { useDebounce } from '../../hooks/useDebounce';
 import { sessionService } from '../../services/sessionService';
@@ -10,7 +10,8 @@ import styles from './SessionListPage.module.css';
 
 function SessionListPage() {
   const navigate = useNavigate();
-  const [typeFilter, setTypeFilter] = useState('');
+  const [searchParams] = useSearchParams();
+  const [typeFilter, setTypeFilter] = useState(searchParams.get('type') ?? '');
   const [statusFilter, setStatusFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
